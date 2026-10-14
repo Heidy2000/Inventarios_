@@ -1,13 +1,10 @@
 import os
 import re
 from datetime import datetime, timedelta
-
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
-
-
 from motor_lifo import (
     construir_esquema,
     cargar_base,
