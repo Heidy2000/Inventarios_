@@ -621,9 +621,7 @@ st.markdown(
 # ============================================================
 # FUNCIONES DE FORMATO
 # ============================================================
-df_historico_oc = pd.read_excel(
-    "Historico_inventarios.xlsx"
-)
+
 def formato_moneda(valor):
     if pd.isna(valor):
         return "$0"
@@ -1157,6 +1155,10 @@ ARCHIVO_HISTORICO = os.path.join(
     "HISTORICO_INVENTARIOS.xlsx"
 )
 
+df_historico_oc =  os.path.join(
+    BASE_DIR,
+    "HISTORICO_INVENTARIOS.xlsx"
+)
 ARCHIVO_ACTUALIZADO = os.path.join(
     BASE_DIR,
     "INVENTARIO_ACTUALIZADO_LIFO.xlsx"
