@@ -32,19 +32,19 @@ EPS = 1e-7
 # PALETA INSTITUCIONAL — REFERENCIA ÁREA LIMPIA
 # ============================================================
 
-AZUL = "#2D6CDF"
-AZUL_OSCURO = "#102D50"
-AZUL_MEDIO = "#1F4C7A"
-AZUL_CLARO = "#6E9FE8"
-AZUL_SUAVE = "#EAF2FF"
+AZUL = "#064B9B"
+AZUL_OSCURO = "#003B7A"
+AZUL_MEDIO = "#0B5AAE"
+AZUL_CLARO = "#5B93D3"
+AZUL_SUAVE = "#E8F1FB"
 
 VERDE = "#87D33F"
 VERDE_CLARO = "#B6E879"
 VERDE_SUAVE = "#EDF9E4"
 
-NARANJA = "#F29B86"
-NARANJA_CLARO = "#F7B6A7"
-NARANJA_SUAVE = "#FFF0EC"
+NARANJA = "#F58220"
+NARANJA_CLARO = "#F9B56E"
+NARANJA_SUAVE = "#FFF1E3"
 
 ROJO = "#E66B6B"
 ROJO_CLARO = "#F39A9A"
@@ -63,6 +63,12 @@ GRIS_GRID = "#E9EEF5"
 GRIS_TEXTO = "#667892"
 GRIS_OSCURO = "#172D49"
 BLANCO = "#FFFFFF"
+
+px.defaults.color_discrete_sequence = [
+    AZUL, NARANJA, VERDE, MORADO, AMARILLO, AZUL_CLARO, ROJO,
+    "#4D6F91", "#9AA9BA", AZUL_OSCURO, "#2FA4A9",
+    NARANJA_CLARO, VERDE_CLARO, "#B7A8FF"
+]
 
 
 # ============================================================
@@ -341,7 +347,7 @@ st.markdown(
         border: 1px solid {GRIS_BORDE};
         border-radius: 22px;
         padding: 1.35rem 1.45rem 1.05rem 1.45rem;
-        box-shadow: 0 4px 15px rgba(16,45,80,0.045);
+        box-shadow: 0 4px 15px rgba(0,59,122,0.045);
         margin: 0.9rem 0 0.95rem 0;
     }}
 
@@ -383,7 +389,7 @@ st.markdown(
     div[data-baseweb="select"] > div:hover,
     div[data-baseweb="select"] > div:focus-within {{
         border-color: {AZUL} !important;
-        box-shadow: 0 0 0 2px rgba(45,108,223,0.08) !important;
+        box-shadow: 0 0 0 2px rgba(6,75,155,0.08) !important;
     }}
 
     div[data-baseweb="select"] span {{
@@ -473,7 +479,7 @@ st.markdown(
         background: #FFFFFF !important;
         border: 1px solid {GRIS_BORDE} !important;
         border-radius: 18px !important;
-        box-shadow: 0 4px 15px rgba(16,45,80,0.045) !important;
+        box-shadow: 0 4px 15px rgba(0,59,122,0.045) !important;
         padding: 0.15rem !important;
     }}
 
@@ -485,7 +491,7 @@ st.markdown(
         border: 1px solid {GRIS_BORDE};
         border-radius: 17px;
         padding: 17px 18px 16px 18px;
-        box-shadow: 0 4px 14px rgba(16,45,80,0.045);
+        box-shadow: 0 4px 14px rgba(0,59,122,0.045);
         min-height: 112px;
     }}
 
@@ -511,7 +517,7 @@ st.markdown(
         border-radius: 17px !important;
         border-color: {GRIS_BORDE} !important;
         background: #FFFFFF !important;
-        box-shadow: 0 4px 14px rgba(16,45,80,0.04);
+        box-shadow: 0 4px 14px rgba(0,59,122,0.04);
     }}
 
     div[data-testid="stDataFrame"] {{
@@ -528,7 +534,7 @@ st.markdown(
         color: #FFFFFF !important;
         font-weight: 700 !important;
         min-height: 41px !important;
-        box-shadow: 0 4px 10px rgba(45,108,223,0.12);
+        box-shadow: 0 4px 10px rgba(6,75,155,0.12);
     }}
 
     .stButton > button:hover {{
@@ -551,6 +557,60 @@ st.markdown(
 
     hr {{
         border-color: {GRIS_BORDE} !important;
+    }}
+
+    /* =========================================================
+       AJUSTES DE MARCA Y CONSISTENCIA
+       ========================================================= */
+    .brand-mark {{
+        background: {NARANJA} !important;
+    }}
+
+    .sidebar-menu-item.active {{
+        border-left: 3px solid {NARANJA} !important;
+    }}
+
+    section[data-testid="stSidebar"] div[data-testid="stRadio"] div[role="radiogroup"] > label:has(input:checked) {{
+        border-color: rgba(245,130,32,0.55) !important;
+        box-shadow: inset 3px 0 0 {NARANJA}, 0 2px 7px rgba(0,0,0,0.10) !important;
+    }}
+
+    .header-pill.accent {{
+        background: {NARANJA_SUAVE};
+        border-color: {NARANJA_CLARO};
+        color: #B85A00 !important;
+    }}
+
+    div[data-testid="metric-container"],
+    div[data-testid="stMetric"] {{
+        border-top: 3px solid {AZUL} !important;
+        transition: box-shadow 0.18s ease, transform 0.18s ease;
+    }}
+
+    div[data-testid="metric-container"]:hover,
+    div[data-testid="stMetric"]:hover {{
+        box-shadow: 0 8px 22px rgba(0,59,122,0.10);
+        transform: translateY(-1px);
+    }}
+
+    /* Métricas dentro de una tarjeta: sin "tarjeta dentro de tarjeta" */
+    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="metric-container"],
+    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stMetric"] {{
+        border: 0 !important;
+        box-shadow: none !important;
+        padding: 0 !important;
+        min-height: 0 !important;
+        transform: none !important;
+    }}
+
+    h3 {{
+        font-size: 1.12rem !important;
+    }}
+
+    .stDownloadButton > button:hover {{
+        background: {AZUL_SUAVE} !important;
+        border-color: {AZUL_OSCURO} !important;
+        color: {AZUL_OSCURO} !important;
     }}
     </style>
     """,
@@ -664,63 +724,199 @@ def porcentaje(parte, total):
 # LOGIN
 # ============================================================
 
+def _logo_login():
+
+    # Si pones un logo local junto a app.py (logo.png, logo.jpg ...)
+    # se usa ese; si no, se usa la URL de siempre.
+    base = os.path.dirname(os.path.abspath(__file__))
+
+    for nombre in ("logo.png", "logo.jpg", "logo.jpeg", "logo.webp", "logo_aldc.png"):
+        ruta = os.path.join(base, nombre)
+        if os.path.exists(ruta):
+            return ruta
+
+    return LOGO_URL
+
+
 def login():
 
-    st.write("")
-    st.write("")
-    st.write("")
+    st.markdown(
+        """
+        <style>
+        .stApp,
+        [data-testid="stAppViewContainer"] {
+            background:
+                radial-gradient(circle at 88% 8%, rgba(245,130,32,0.20) 0, rgba(245,130,32,0) 36%),
+                linear-gradient(135deg, #003B7A 0%, #064B9B 60%, #0B5AAE 100%) !important;
+        }
+
+        .block-container {
+            padding-top: 7vh !important;
+        }
+
+        div[data-testid="stVerticalBlockBorderWrapper"]:has(.login-marker) {
+            background: #FFFFFF !important;
+            border: 0 !important;
+            border-top: 5px solid #F58220 !important;
+            border-radius: 20px !important;
+            box-shadow: 0 24px 60px rgba(0,20,50,0.38) !important;
+            padding: 1.6rem 1.7rem 1.2rem 1.7rem !important;
+        }
+
+        div[data-testid="stImage"] {
+            display: flex;
+            justify-content: center;
+        }
+
+        .login-head {
+            text-align: center;
+            margin: 0.5rem 0 1.3rem 0;
+        }
+
+        .login-title {
+            color: #003B7A;
+            font-size: 1.65rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            line-height: 1.15;
+        }
+
+        .login-sub {
+            color: #667892;
+            font-size: 0.9rem;
+            margin: 0.4rem 0 0 0;
+        }
+
+        .login-accent {
+            width: 44px;
+            height: 4px;
+            border-radius: 4px;
+            background: #F58220;
+            margin: 0.95rem auto 0 auto;
+        }
+
+        div[data-testid="stForm"] {
+            border: 0 !important;
+            padding: 0 !important;
+        }
+
+        div[data-testid="stForm"] label p {
+            color: #003B7A !important;
+            font-weight: 650 !important;
+            font-size: 0.82rem !important;
+        }
+
+        div[data-baseweb="input"] {
+            background: #F4F7FB !important;
+            border: 1px solid #D5DFEB !important;
+            border-radius: 10px !important;
+            min-height: 46px !important;
+        }
+
+        div[data-baseweb="base-input"] {
+            background: transparent !important;
+            border-radius: 10px !important;
+        }
+
+        div[data-baseweb="input"]:focus-within {
+            border-color: #064B9B !important;
+            box-shadow: 0 0 0 3px rgba(6,75,155,0.15) !important;
+        }
+
+        div[data-baseweb="input"] input {
+            color: #0F2745 !important;
+            font-size: 0.95rem !important;
+        }
+
+        div[data-testid="stFormSubmitButton"] > button {
+            background: #064B9B !important;
+            border: 1px solid #064B9B !important;
+            color: #FFFFFF !important;
+            border-radius: 10px !important;
+            min-height: 48px !important;
+            font-size: 0.98rem !important;
+            font-weight: 700 !important;
+            box-shadow: 0 6px 16px rgba(6,75,155,0.28) !important;
+            margin-top: 0.35rem;
+        }
+
+        div[data-testid="stFormSubmitButton"] > button:hover {
+            background: #003B7A !important;
+            border-color: #003B7A !important;
+            transform: translateY(-1px);
+        }
+
+        div[data-testid="stFormSubmitButton"] > button:focus-visible {
+            outline: none !important;
+            box-shadow: 0 0 0 3px rgba(245,130,32,0.45) !important;
+        }
+
+        .login-footer {
+            margin-top: 1.1rem;
+            padding-top: 0.9rem;
+            border-top: 1px solid #E3EAF3;
+            text-align: center;
+            color: #7A8AA0;
+            font-size: 0.76rem;
+            line-height: 1.6;
+        }
+
+        .login-footer strong {
+            color: #003B7A;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
     col_izq, col_centro, col_der = st.columns(
-        [1, 1.05, 1]
+        [1, 1.15, 1]
     )
 
     with col_centro:
 
         with st.container(border=True):
 
-            col_logo_izq, col_logo, col_logo_der = st.columns(
-                [0.8, 2, 0.8]
-            )
-
-            with col_logo:
-
-                st.image(
-                    LOGO_URL,
-                    width=235
-                )
-
             st.markdown(
-                "<h2 style='text-align:center;'>Inventarios ALDC</h2>",
+                '<span class="login-marker"></span>',
                 unsafe_allow_html=True
             )
 
-            st.caption(
-                "Plataforma de gestión y analítica de inventarios"
+            st.image(
+                _logo_login(),
+                width=190
             )
 
-            st.info(
-                "🔐 **Acceso institucional**\n\n"
-                "Ingresa con tus credenciales para acceder "
-                "al tablero de inventarios."
+            st.markdown(
+                """
+                <div class="login-head">
+                    <div class="login-title">Inventarios ALDC</div>
+                    <p class="login-sub">Plataforma de gestión y analítica de inventarios</p>
+                    <div class="login-accent"></div>
+                </div>
+                """,
+                unsafe_allow_html=True
             )
 
-            usuario = st.text_input(
-                "Usuario",
-                placeholder="Ingrese su usuario",
-                key="login_usuario"
-            )
+            with st.form("form_login", clear_on_submit=False):
 
-            contraseña = st.text_input(
-                "Contraseña",
-                type="password",
-                placeholder="Ingrese su contraseña",
-                key="login_contraseña"
-            )
+                usuario = st.text_input(
+                    "Usuario",
+                    placeholder="Ingrese su usuario",
+                    key="login_usuario"
+                )
 
-            ingresar = st.button(
-                "🔐 Ingresar a la plataforma",
-                use_container_width=True
-            )
+                contraseña = st.text_input(
+                    "Contraseña",
+                    type="password",
+                    placeholder="Ingrese su contraseña",
+                    key="login_contraseña"
+                )
+
+                ingresar = st.form_submit_button(
+                    "Ingresar",
+                    use_container_width=True
+                )
 
             if ingresar:
 
@@ -751,18 +947,14 @@ def login():
                         "Usuario o contraseña incorrectos."
                     )
 
-            st.divider()
-
             st.markdown(
-                "**Área Limpia D.C. S.A.S. E.S.P.**"
-            )
-
-            st.caption(
-                "Sistema de gestión y análisis de inventarios"
-            )
-
-            st.success(
-                "🔒 Acceso protegido"
+                """
+                <div class="login-footer">
+                    <strong>Área Limpia D.C. S.A.S. E.S.P.</strong><br>
+                    🔒 Acceso protegido · Sistema de gestión y análisis de inventarios
+                </div>
+                """,
+                unsafe_allow_html=True
             )
 
 
@@ -1252,6 +1444,7 @@ with st.sidebar:
             "Inventario",
             "Evolución",
             "Riesgos y detalle",
+            "Órdenes de compra",
             "Actualizar Kardex"
         ],
         label_visibility="collapsed",
@@ -1348,7 +1541,7 @@ st.markdown(
         </div>
         <div class="header-pills">
             <div class="header-pill primary">Inventario actual</div>
-            <div class="header-pill">Corte: {ESQ["corte"]}</div>
+            <div class="header-pill accent">Corte: {ESQ["corte"]}</div>
             {_pill_periodo}
             <div class="header-pill success">Datos actualizados</div>
         </div>
@@ -1605,6 +1798,9 @@ stock_total, valor_total, rotacion, dias_promedio = kpis_corte(
     ESQ
 )
 
+# Suma de la columna de costo: base de todos los porcentajes mostrados
+valor_total_col = suma_columna(df_filtrado, COL_COSTE)
+
 
 # ============================================================
 # PÁGINA 1
@@ -1652,7 +1848,7 @@ if pagina == "Resumen":
 
     porcentaje_envejecido = porcentaje(
         valor_mayor_12,
-        valor_total
+        valor_total_col
     )
 
     k1, k2, k4, k5 = st.columns(4)
@@ -1669,13 +1865,13 @@ if pagina == "Resumen":
             formato_moneda(valor_total)
         )
 
-    with k4:
+    with k3:
         st.metric(
             "⏱️ Días de inventario",
             formato_numero(dias_promedio)
         )
 
-    with k5:
+    with k4:
         st.metric(
             "⚠️ Valor > 12 meses",
             formato_moneda(valor_mayor_12),
@@ -1687,6 +1883,12 @@ if pagina == "Resumen":
     # --------------------------------------------------------
     # LECTURA AUTOMÁTICA
     # --------------------------------------------------------
+
+    if abs(valor_total - valor_total_col) > 1:
+        st.caption(
+            "⚠️ El valor del KPI difiere de la suma de la columna de costo del corte; "
+            "los porcentajes usan la suma de la columna."
+        )
 
     mes_mayor_entrada = (
         df_mensual.loc[
@@ -1828,6 +2030,8 @@ if pagina == "Resumen":
             390
         )
 
+        fig_area.update_yaxes(categoryorder="total ascending")
+
         st.plotly_chart(
             fig_area,
             use_container_width=True
@@ -1891,7 +2095,7 @@ if pagina == "Resumen":
             )
 
             fig_edad.update_layout(
-                title="Envejecimiento del valor",
+                title="Valor del inventario por antigüedad (LIFO)",
                 xaxis_title="Valor del inventario",
                 yaxis_title="",
                 showlegend=False
@@ -2013,9 +2217,9 @@ elif pagina == "Inventario":
 
         top_articulos["Participacion"] = (
             top_articulos["Valor"]
-            / valor_total
+            / valor_total_col
             * 100
-            if valor_total != 0
+            if valor_total_col != 0
             else 0
         )
 
@@ -2047,7 +2251,7 @@ elif pagina == "Inventario":
         )
 
         fig_top.update_layout(
-            title="Top 12 artículos por valor de inventario",
+            title=f"Top 12 artículos por valor de inventario — corte {ESQ['corte']}",
             xaxis_title="Valor",
             yaxis_title="",
             legend_title="Bodega"
@@ -2148,9 +2352,9 @@ elif pagina == "Inventario":
 
     resumen_bodega["Participacion"] = (
         resumen_bodega["Valor"]
-        / valor_total
+        / valor_total_col
         * 100
-        if valor_total != 0
+        if valor_total_col != 0
         else 0
     )
 
@@ -2201,6 +2405,12 @@ elif pagina == "Evolución":
     # --------------------------------------------------------
     # KPIs DEL PERIODO
     # --------------------------------------------------------
+
+    if antiguedad_seleccionada != "Todas":
+        st.info(
+            "La antigüedad se calcula con el corte actual: la serie mensual "
+            "muestra el histórico de los registros que hoy pertenecen a ese rango."
+        )
 
     total_entradas = df_mensual["Entradas"].sum()
     total_salidas = df_mensual["Salidas"].sum()
@@ -2468,7 +2678,7 @@ elif pagina == "Evolución":
         xaxis=dict(
             title="Periodo",
             categoryorder="array",
-            categoryarray=ESQ["etiquetas"],
+            categoryarray=df_mensual["Mes"].tolist(),
             showgrid=False
         ),
 
@@ -2918,7 +3128,7 @@ elif pagina == "Evolución":
         )
 
         fig_costos.update_layout(
-            title="Valor de los movimientos",
+            title="Valor de entradas y salidas por mes",
             xaxis_title="",
             yaxis_title="Valor"
         )
@@ -2959,7 +3169,7 @@ elif pagina == "Evolución":
         )
 
         fig_rotacion.update_layout(
-            title="Comportamiento de la rotación",
+            title="Rotación promedio por registro",
             xaxis_title="",
             yaxis_title="Rotación"
         )
@@ -3029,7 +3239,7 @@ elif pagina == "Riesgos y detalle":
 
     participacion_alerta = porcentaje(
         valor_alerta,
-        valor_total
+        valor_total_col
     )
 
     k1, k2, k3, k4 = st.columns(4)
@@ -3116,7 +3326,7 @@ elif pagina == "Riesgos y detalle":
         )
 
         fig_riesgos.update_layout(
-            title="Mayor valor concentrado en inventario > 12 meses",
+            title=f"Mayor valor concentrado en inventario > 12 meses — corte {ESQ['corte']}",
             xaxis_title="Valor",
             yaxis_title="",
             legend_title="Bodega"
@@ -3179,6 +3389,12 @@ elif pagina == "Riesgos y detalle":
         columnas_disponibles
     ].copy()
 
+    if COL_COSTE in df_detalle.columns:
+        df_detalle = df_detalle.sort_values(
+            COL_COSTE,
+            ascending=False
+        )
+
     config_detalle = {}
 
     for columna, formato in [
@@ -3221,6 +3437,409 @@ elif pagina == "Riesgos y detalle":
         file_name="detalle_inventarios_aldc.csv",
         mime="text/csv"
     )
+
+
+# ============================================================
+# PÁGINA: ÓRDENES DE COMPRA
+# Alertas por referencias con inventario > 3 meses y OC > 30%
+# del stock total existente en el histórico.
+# ============================================================
+
+elif pagina == "Órdenes de compra":
+
+    import hashlib
+    import io
+    import smtplib
+    import unicodedata
+    from email.message import EmailMessage
+
+    st.title("Órdenes de compra")
+    st.caption(
+        "Identifica órdenes que incluyen referencias con inventario "
+        "de más de 3 meses y cuya cantidad solicitada supera el 30% "
+        "del stock total registrado en el histórico."
+    )
+
+    def _normalizar_nombre_columna(valor):
+        texto = str(valor).strip().lower()
+        texto = unicodedata.normalize("NFKD", texto)
+        texto = "".join(c for c in texto if not unicodedata.combining(c))
+        return re.sub(r"[^a-z0-9]", "", texto)
+
+    def _buscar_columna(df_busqueda, candidatos):
+        mapa = {
+            _normalizar_nombre_columna(c): c
+            for c in df_busqueda.columns
+        }
+        for candidato in candidatos:
+            encontrada = mapa.get(_normalizar_nombre_columna(candidato))
+            if encontrada is not None:
+                return encontrada
+        return None
+
+    def _normalizar_referencia(serie):
+        return (
+            serie.astype(str)
+            .str.strip()
+            .str.replace(r"\.0$", "", regex=True)
+            .replace({"nan": "", "None": "", "NaT": ""})
+        )
+
+    def _numero_seguro(serie):
+        if pd.api.types.is_numeric_dtype(serie):
+            return pd.to_numeric(serie, errors="coerce").fillna(0)
+        texto = serie.astype(str).str.strip()
+        # Admite números con separadores de miles y coma decimal.
+        texto = texto.str.replace("$", "", regex=False).str.replace(" ", "", regex=False)
+        ambos = texto.str.contains(",", na=False) & texto.str.contains(r"\.", na=False)
+        texto.loc[ambos] = (
+            texto.loc[ambos].str.replace(".", "", regex=False)
+            .str.replace(",", ".", regex=False)
+        )
+        solo_coma = texto.str.contains(",", na=False) & ~texto.str.contains(r"\.", na=False)
+        texto.loc[solo_coma] = texto.loc[solo_coma].str.replace(",", ".", regex=False)
+        return pd.to_numeric(texto, errors="coerce").fillna(0)
+
+    st.markdown("### 1. Cargar archivo de órdenes")
+    archivo_ordenes = st.file_uploader(
+        "Carga el Excel o CSV con las órdenes de compra",
+        type=["xlsx", "xls", "csv"],
+        key="archivo_ordenes_compra"
+    )
+
+    st.info(
+        "El archivo debe incluir el identificador de la orden, la referencia "
+        "del artículo y la cantidad solicitada. Se aceptan encabezados como "
+        "IdOrden, Cod Articulo / Id Articulo y Cantidad. Si existe una columna "
+        "Estado, se excluyen registros anulados, cancelados, cerrados o recibidos."
+    )
+
+    if archivo_ordenes is not None:
+        try:
+            bytes_ordenes = archivo_ordenes.getvalue()
+            firma_ordenes = hashlib.sha256(bytes_ordenes).hexdigest()
+
+            if archivo_ordenes.name.lower().endswith(".csv"):
+                try:
+                    df_ordenes_original = pd.read_csv(
+                        io.BytesIO(bytes_ordenes), sep=None, engine="python"
+                    )
+                except UnicodeDecodeError:
+                    df_ordenes_original = pd.read_csv(
+                        io.BytesIO(bytes_ordenes), sep=None, engine="python",
+                        encoding="latin-1"
+                    )
+            else:
+                df_ordenes_original = pd.read_excel(io.BytesIO(bytes_ordenes))
+
+            col_orden = _buscar_columna(
+                df_ordenes_original,
+                ["IdOrden", "Id Orden", "Orden de compra", "Codigo de orden",
+                 "Código de orden", "Numero de orden", "Número de orden", "OC"]
+            )
+            col_referencia_oc = _buscar_columna(
+                df_ordenes_original,
+                ["Cod Articulo", "Código Articulo", "Codigo Articulo",
+                 "Id Articulo", "IdArtículo", "Referencia", "Código de artículo",
+                 "Codigo de articulo", "Material"]
+            )
+            col_cantidad_oc = _buscar_columna(
+                df_ordenes_original,
+                ["Cantidad", "Cantidad solicitada", "Cantidad ordenada",
+                 "Cantidad OC", "Qty", "Cantidad requerida"]
+            )
+            col_estado_oc = _buscar_columna(
+                df_ordenes_original,
+                ["Estado", "Status", "Estado de la orden"]
+            )
+
+            faltantes_oc = []
+            if col_orden is None:
+                faltantes_oc.append("IdOrden / Orden de compra")
+            if col_referencia_oc is None:
+                faltantes_oc.append("Cod Articulo / Id Articulo / Referencia")
+            if col_cantidad_oc is None:
+                faltantes_oc.append("Cantidad")
+
+            if faltantes_oc:
+                st.error(
+                    "No pude identificar estas columnas en el archivo: "
+                    + ", ".join(faltantes_oc)
+                    + ". Revisa los encabezados y vuelve a cargarlo."
+                )
+                st.write("Encabezados encontrados:", list(df_ordenes_original.columns))
+            elif not COL_ANTIGUEDAD or COL_ANTIGUEDAD not in df.columns:
+                st.error(
+                    "El histórico no contiene una columna de antigüedad reconocida. "
+                    "No es posible validar la regla de más de 3 meses."
+                )
+            elif not COL_STOCK or COL_STOCK not in df.columns:
+                st.error(
+                    "No se encontró la columna de stock en el histórico. "
+                    "No es posible comparar las cantidades de las órdenes."
+                )
+            elif _buscar_columna(df, ["Codigo Articulo", "Código Articulo",
+                                      "Cod Articulo", "Id Articulo",
+                                      "Referencia", "Material"]) is None:
+                st.error(
+                    "No se encontró una columna de referencia de artículo "
+                    "en el histórico de inventarios."
+                )
+            else:
+                col_referencia_hist = _buscar_columna(
+                    df, ["Codigo Articulo", "Código Articulo", "Cod Articulo",
+                         "Id Articulo", "Referencia", "Material"]
+                )
+                col_articulo_hist = _buscar_columna(
+                    df, ["Articulo", "Artículo", "Descripcion", "Descripción"]
+                )
+                col_bodega_hist = _buscar_columna(
+                    df, ["Bodega", "Almacen", "Almacén"]
+                )
+
+                # El histórico se consolida por referencia: stock total y
+                # stock ubicado en categorías con antigüedad superior a 3 meses.
+                hist = df.copy()
+                hist["_ref_oc"] = _normalizar_referencia(hist[col_referencia_hist])
+                hist["_stock_oc"] = _numero_seguro(hist[COL_STOCK]).clip(lower=0)
+                hist["_edad_oc"] = hist[COL_ANTIGUEDAD].astype(str).str.strip()
+                hist["_edad_mayor_3m"] = hist["_edad_oc"].str.contains(
+                    r"Entre 4 y 6 meses|Entre 7 y 12 meses|Mayor a 12 meses|"
+                    r"Mayor de 3 meses|Mas de 3 meses|Más de 3 meses",
+                    case=False, na=False, regex=True
+                )
+                hist = hist[hist["_ref_oc"].ne("")].copy()
+
+                agregaciones_hist = {
+                    "Stock histórico": ("_stock_oc", "sum"),
+                    "Stock con antigüedad > 3 meses": (
+                        "_stock_oc",
+                        lambda x: float(x[hist.loc[x.index, "_edad_mayor_3m"]].sum())
+                    ),
+                    "Categorías de antigüedad": (
+                        "_edad_oc",
+                        lambda x: ", ".join(sorted(set(
+                            str(v) for v in x
+                            if pd.notna(v) and str(v).strip()
+                        )))
+                    )
+                }
+                if col_articulo_hist:
+                    agregaciones_hist["Artículo"] = (col_articulo_hist, "first")
+                if col_bodega_hist:
+                    agregaciones_hist["Bodegas"] = (
+                        col_bodega_hist,
+                        lambda x: ", ".join(sorted(set(
+                            str(v) for v in x if pd.notna(v) and str(v).strip()
+                        )))
+                    )
+
+                hist_ref = hist.groupby("_ref_oc", as_index=False).agg(**agregaciones_hist)
+
+                oc = df_ordenes_original.copy()
+                oc["_orden_oc"] = _normalizar_referencia(oc[col_orden])
+                oc["_ref_oc"] = _normalizar_referencia(oc[col_referencia_oc])
+                oc["_cantidad_oc"] = _numero_seguro(oc[col_cantidad_oc])
+                oc = oc[
+                    oc["_orden_oc"].ne("")
+                    & oc["_ref_oc"].ne("")
+                    & (oc["_cantidad_oc"] > 0)
+                ].copy()
+
+                if col_estado_oc:
+                    estados = oc[col_estado_oc].astype(str).str.lower()
+                    estados_no_vigentes = (
+                        estados.str.contains(
+                            r"anulad|cancelad|cerrad|recibid|finaliz|completad",
+                            na=False
+                        )
+                    )
+                    oc = oc[~estados_no_vigentes].copy()
+
+                # Consolidar renglones repetidos de una misma orden y referencia.
+                claves_oc = ["_orden_oc", "_ref_oc"]
+                extras_oc = {}
+                for posible in ["Grupo", "Req", "Fecha", "Estado"]:
+                    col_extra = _buscar_columna(oc, [posible])
+                    if col_extra and col_extra not in [col_orden, col_referencia_oc,
+                                                       col_cantidad_oc]:
+                        extras_oc[posible] = (col_extra, "first")
+
+                agg_oc = {"Cantidad ordenada": ("_cantidad_oc", "sum")}
+                for nombre_extra, (col_extra, metodo) in extras_oc.items():
+                    agg_oc[nombre_extra] = (col_extra, metodo)
+                oc_agrupada = oc.groupby(claves_oc, as_index=False).agg(**agg_oc)
+
+                alertas_oc = oc_agrupada.merge(
+                    hist_ref, on="_ref_oc", how="left"
+                )
+                alertas_oc["Stock histórico"] = alertas_oc["Stock histórico"].fillna(0)
+                alertas_oc["Stock con antigüedad > 3 meses"] = (
+                    alertas_oc["Stock con antigüedad > 3 meses"].fillna(0)
+                )
+                alertas_oc["% de la orden sobre el stock"] = (
+                    alertas_oc["Cantidad ordenada"]
+                    .div(alertas_oc["Stock histórico"].replace(0, pd.NA))
+                    .mul(100)
+                )
+
+                alertas_oc = alertas_oc[
+                    (alertas_oc["Stock con antigüedad > 3 meses"] > 0)
+                    & (alertas_oc["Stock histórico"] > 0)
+                    & (
+                        alertas_oc["Cantidad ordenada"]
+                        > alertas_oc["Stock histórico"] * 0.30
+                    )
+                ].copy()
+
+                alertas_oc = alertas_oc.rename(
+                    columns={"_orden_oc": "Orden de compra", "_ref_oc": "Referencia"}
+                )
+                columnas_salida = [
+                    "Orden de compra", "Referencia", "Artículo",
+                    "Cantidad ordenada", "Stock histórico",
+                    "Stock con antigüedad > 3 meses",
+                    "% de la orden sobre el stock",
+                    "Categorías de antigüedad", "Bodegas",
+                    "Grupo", "Req", "Fecha", "Estado"
+                ]
+                columnas_salida = [
+                    c for c in columnas_salida if c in alertas_oc.columns
+                ]
+                alertas_oc = alertas_oc[columnas_salida].sort_values(
+                    "% de la orden sobre el stock", ascending=False
+                )
+
+                st.markdown("### 2. Resultados de la validación")
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Órdenes/referencias alertadas", f"{len(alertas_oc):,}")
+                m2.metric(
+                    "Referencias diferentes",
+                    f"{alertas_oc['Referencia'].nunique() if not alertas_oc.empty else 0:,}"
+                )
+                m3.metric(
+                    "Umbral de compra",
+                    "Más del 30% del stock"
+                )
+
+                if alertas_oc.empty:
+                    st.success(
+                        "No se encontraron órdenes que cumplan simultáneamente "
+                        "las dos condiciones: stock con antigüedad superior a 3 meses "
+                        "y cantidad ordenada mayor al 30% del stock histórico."
+                    )
+                else:
+                    st.warning(
+                        "Se encontraron órdenes que cumplen las condiciones de alerta."
+                    )
+                    st.dataframe(
+                        alertas_oc,
+                        use_container_width=True,
+                        hide_index=True
+                    )
+                    st.download_button(
+                        "Descargar alertas de órdenes (Excel/CSV)",
+                        data=alertas_oc.to_csv(index=False, encoding="utf-8-sig"),
+                        file_name="alertas_ordenes_compra.csv",
+                        mime="text/csv"
+                    )
+
+                # Correo automático una sola vez por archivo en la sesión.
+                # La configuración se toma de st.secrets["email"].
+                if not alertas_oc.empty and st.session_state.get(
+                    "firma_ordenes_correo_enviada"
+                ) != firma_ordenes:
+                    try:
+                        config_email = dict(st.secrets["email"])
+                        remitente = str(config_email.get("remitente", "")).strip()
+                        contrasena = str(config_email.get("contrasena", "")).strip()
+                        servidor = str(
+                            config_email.get("servidor", "smtp.office365.com")
+                        ).strip()
+                        puerto = int(config_email.get("puerto", 587))
+
+                        destinatarios_config = (
+                            config_email.get("destinatarios")
+                            or config_email.get("destinatario")
+                            or config_email.get("correo_destino")
+                            or config_email.get("para")
+                            or ""
+                        )
+                        destinatarios = [
+                            x.strip()
+                            for x in re.split(r"[,;]", str(destinatarios_config))
+                            if x.strip()
+                        ]
+
+                        if not remitente or not contrasena or not destinatarios:
+                            raise ValueError(
+                                "Falta configurar remitente, contraseña o destinatarios "
+                                "en st.secrets['email']."
+                            )
+
+                        cuerpo_html = alertas_oc.to_html(
+                            index=False, border=0, justify="left"
+                        )
+                        mensaje = EmailMessage()
+                        mensaje["Subject"] = (
+                            f"Alerta de órdenes de compra: {len(alertas_oc)} "
+                            "referencias con inventario antiguo"
+                        )
+                        mensaje["From"] = remitente
+                        mensaje["To"] = ", ".join(destinatarios)
+                        mensaje.set_content(
+                            "Se detectaron órdenes de compra que cumplen los criterios "
+                            "de antigüedad superior a 3 meses y cantidad mayor al 30% "
+                            "del stock histórico. Consulte la tabla en la versión HTML "
+                            "de este correo."
+                        )
+                        mensaje.add_alternative(
+                            f"""
+                            <html><body style="font-family:Arial,sans-serif;color:#172D49">
+                            <div style="background:#102D50;color:#fff;padding:18px">
+                                <h2 style="margin:0;color:#fff">Alerta de órdenes de compra</h2>
+                                <p style="margin:6px 0 0">Inventarios ALDC</p>
+                            </div>
+                            <p>Se identificaron <b>{len(alertas_oc)}</b> combinaciones
+                            de orden y referencia para revisar.</p>
+                            <p><b>Regla:</b> la referencia tiene stock con antigüedad
+                            superior a 3 meses y la cantidad de la orden supera el 30%
+                            del stock total existente en el histórico.</p>
+                            <div style="overflow-x:auto">{cuerpo_html}</div>
+                            <p style="font-size:12px;color:#667892">
+                            Mensaje automático generado por Inventarios ALDC.
+                            </p></body></html>
+                            """,
+                            subtype="html"
+                        )
+
+                        with smtplib.SMTP(servidor, puerto, timeout=30) as smtp:
+                            smtp.starttls()
+                            smtp.login(remitente, contrasena)
+                            smtp.send_message(mensaje)
+
+                        st.session_state["firma_ordenes_correo_enviada"] = firma_ordenes
+                        st.success(
+                            "Correo de alerta enviado automáticamente a: "
+                            + ", ".join(destinatarios)
+                        )
+                    except Exception as exc:
+                        st.error(
+                            "Las alertas se calcularon, pero no fue posible enviar "
+                            f"el correo automático. Detalle: {exc}"
+                        )
+                        st.caption(
+                            "Configura los datos SMTP en los Secrets de Streamlit Cloud. "
+                            "Después de corregirlos, vuelve a cargar el archivo de órdenes."
+                        )
+                elif not alertas_oc.empty:
+                    st.info(
+                        "El correo de este archivo ya se envió en esta sesión; "
+                        "no se volverá a enviar automáticamente en cada actualización."
+                    )
+
+        except Exception as exc:
+            st.error(f"No fue posible procesar el archivo de órdenes: {exc}")
 
 
 # ============================================================
