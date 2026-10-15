@@ -33,7 +33,7 @@ EPS = 1e-7
 # ============================================================
 
 AZUL = "#496A7A"          # Azul grisáceo, menos saturado
-AZUL_OSCURO = "#0E1958"   # Carbón azulado
+AZUL_OSCURO = "#333c87"   # Carbón azulado
 AZUL_MEDIO = "#587A88"    # Tono medio para navegación
 AZUL_CLARO = "#A9C0C9"    # Azul gris claro para gráficos
 AZUL_SUAVE = "#EEF3F5"    # Fondo suave
