@@ -719,10 +719,27 @@ def porcentaje(parte, total):
 
     return parte / total * 100
 
+# ============================================================
+# LOGO DEL INICIO DE SESIÓN
+# ============================================================
 
-# ============================================================
-# LOGIN
-# ============================================================
+def _logo_login():
+
+    base = os.path.dirname(os.path.abspath(__file__))
+
+    for nombre in (
+        "logo.png",
+        "logo.jpg",
+        "logo.jpeg",
+        "logo.webp",
+        "logo_aldc.png"
+    ):
+        ruta = os.path.join(base, nombre)
+
+        if os.path.exists(ruta):
+            return ruta
+
+    return LOGO_URL
 
 
 # ============================================================
