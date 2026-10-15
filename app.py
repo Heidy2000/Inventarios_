@@ -3868,7 +3868,7 @@ elif pagina == "Órdenes de compra":
                         servidor = str(
                             config_email.get("servidor", "smtp.office365.com")
                         ).strip()
-                        puerto = int(config_email.get("puerto", 587))
+                        puerto = int(config_email.get("puerto", 467))
 
                         destinatarios_config = (
                             config_email.get("destinatarios")
