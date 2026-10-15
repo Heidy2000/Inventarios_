@@ -621,7 +621,9 @@ st.markdown(
 # ============================================================
 # FUNCIONES DE FORMATO
 # ============================================================
-
+df_historico_oc = pd.read_excel(
+    "Historico_inventarios.xlsx"
+)
 def formato_moneda(valor):
     if pd.isna(valor):
         return "$0"
@@ -3551,9 +3553,7 @@ elif pagina == "Riesgos y detalle":
     )
 
 
-df_historico_oc = pd.read_excel(
-    "Historico_inventarios.xlsx"
-)
+
 
 
 elif pagina == "Órdenes de compra":
