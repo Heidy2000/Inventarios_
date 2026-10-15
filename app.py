@@ -3925,7 +3925,7 @@ elif pagina == "Órdenes de compra":
                             subtype="html"
                         )
 
-                     
+
                         import ssl
                         
                         etapa_correo = "conexión con Gmail"
@@ -3943,10 +3943,12 @@ elif pagina == "Órdenes de compra":
                                 etapa_correo = "envío del mensaje"
                                 smtp.send_message(mensaje)
                         
+                            # Solo se marca como enviado si no hubo errores.
                             st.session_state["firma_ordenes_correo_enviada"] = firma_ordenes
                         
                             st.success(
-                                "Correo de alerta enviado a: " + ", ".join(destinatarios)
+                                "Correo de alerta enviado correctamente a: "
+                                + ", ".join(destinatarios)
                             )
                         
                         except Exception as exc:
@@ -3955,13 +3957,6 @@ elif pagina == "Órdenes de compra":
                                 f"Error: {type(exc).__name__}: {exc}"
                             )
 
-
-
-                        st.session_state["firma_ordenes_correo_enviada"] = firma_ordenes
-                        st.success(
-                            "Correo de alerta enviado automáticamente a: "
-                            + ", ".join(destinatarios)
-                        )
                     except Exception as exc:
                         st.error(
                             "Las alertas se calcularon, pero no fue posible enviar "
