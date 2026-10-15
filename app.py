@@ -3925,16 +3925,36 @@ elif pagina == "Órdenes de compra":
                             subtype="html"
                         )
 
+                     
                         import ssl
                         
-                        with smtplib.SMTP_SSL(
-                            servidor,
-                            puerto,
-                            timeout=30,
-                            context=ssl.create_default_context()
-                        ) as smtp:
-                            smtp.login(remitente, contrasena)
-                            smtp.send_message(mensaje)
+                        etapa_correo = "conexión con Gmail"
+                        
+                        try:
+                            with smtplib.SMTP_SSL(
+                                servidor,
+                                puerto,
+                                timeout=30,
+                                context=ssl.create_default_context()
+                            ) as smtp:
+                                etapa_correo = "autenticación de Gmail"
+                                smtp.login(remitente, contrasena)
+                        
+                                etapa_correo = "envío del mensaje"
+                                smtp.send_message(mensaje)
+                        
+                            st.session_state["firma_ordenes_correo_enviada"] = firma_ordenes
+                        
+                            st.success(
+                                "Correo de alerta enviado a: " + ", ".join(destinatarios)
+                            )
+                        
+                        except Exception as exc:
+                            st.error(
+                                f"Falló la etapa de {etapa_correo}. "
+                                f"Error: {type(exc).__name__}: {exc}"
+                            )
+
 
 
                         st.session_state["firma_ordenes_correo_enviada"] = firma_ordenes
