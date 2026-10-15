@@ -1659,8 +1659,7 @@ st.markdown(
             <div class="header-pill primary">Inventario actual</div>
             <div class="header-pill accent">Corte: {ESQ["corte"]}</div>
             {_pill_periodo}
-            <div class="header-pill success">Datos actualizados</div>
-        </div>
+
     </div>
     """,
     unsafe_allow_html=True
