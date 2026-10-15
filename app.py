@@ -1850,7 +1850,7 @@ if pagina in ("Resumen", "Resumen e inventario"):
         valor_total_col
     )
 
-    k1, k2, k4, k5 = st.columns(4)
+    k1, k2, k3, k4 = st.columns(4)
 
     with k1:
         st.metric(
