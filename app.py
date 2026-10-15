@@ -32,11 +32,11 @@ EPS = 1e-7
 # PALETA INSTITUCIONAL — REFERENCIA ÁREA LIMPIA
 # ============================================================
 
-AZUL = "#064B9B"
-AZUL_OSCURO = "#003B7A"
-AZUL_MEDIO = "#0B5AAE"
-AZUL_CLARO = "#5B93D3"
-AZUL_SUAVE = "#E8F1FB"
+AZUL = "#496A7A"          # Azul grisáceo, menos saturado
+AZUL_OSCURO = "#263F4D"   # Carbón azulado
+AZUL_MEDIO = "#587A88"    # Tono medio para navegación
+AZUL_CLARO = "#A9C0C9"    # Azul gris claro para gráficos
+AZUL_SUAVE = "#EEF3F5"    # Fondo suave
 
 VERDE = "#87D33F"
 VERDE_CLARO = "#B6E879"
@@ -746,8 +746,8 @@ def login():
         .stApp,
         [data-testid="stAppViewContainer"] {
             background:
-                radial-gradient(circle at 88% 8%, rgba(245,130,32,0.20) 0, rgba(245,130,32,0) 36%),
-                linear-gradient(135deg, #003B7A 0%, #064B9B 60%, #0B5AAE 100%) !important;
+                radial-gradient(circle at 85% 12%, rgba(245,130,32,0.13) 0, rgba(245,130,32,0) 32%),
+                linear-gradient(135deg, #F4F6F8 0%, #E9EEF1 100%) !important;
         }
 
         .block-container {
@@ -756,10 +756,10 @@ def login():
 
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.login-marker) {
             background: #FFFFFF !important;
-            border: 0 !important;
+            border: 1px solid #E0E6EA !important;
             border-top: 5px solid #F58220 !important;
             border-radius: 20px !important;
-            box-shadow: 0 24px 60px rgba(0,20,50,0.38) !important;
+            box-shadow: 0 18px 45px rgba(38,63,77,0.14) !important;
             padding: 1.6rem 1.7rem 1.2rem 1.7rem !important;
         }
 
@@ -774,7 +774,7 @@ def login():
         }
 
         .login-title {
-            color: #003B7A;
+            color: #263F4D;
             font-size: 1.65rem;
             font-weight: 800;
             letter-spacing: -0.5px;
@@ -801,7 +801,7 @@ def login():
         }
 
         div[data-testid="stForm"] label p {
-            color: #003B7A !important;
+            color: #263F4D !important;
             font-weight: 650 !important;
             font-size: 0.82rem !important;
         }
@@ -819,8 +819,8 @@ def login():
         }
 
         div[data-baseweb="input"]:focus-within {
-            border-color: #064B9B !important;
-            box-shadow: 0 0 0 3px rgba(6,75,155,0.15) !important;
+            border-color: #F58220 !important;
+            box-shadow: 0 0 0 3px rgba(245,130,32,0.15) !important;
         }
 
         div[data-baseweb="input"] input {
@@ -829,20 +829,20 @@ def login():
         }
 
         div[data-testid="stFormSubmitButton"] > button {
-            background: #064B9B !important;
-            border: 1px solid #064B9B !important;
+            background: #F58220 !important;
+            border: 1px solid #F58220 !important;
             color: #FFFFFF !important;
             border-radius: 10px !important;
             min-height: 48px !important;
             font-size: 0.98rem !important;
             font-weight: 700 !important;
-            box-shadow: 0 6px 16px rgba(6,75,155,0.28) !important;
+            box-shadow: 0 6px 16px rgba(245,130,32,0.22) !important;
             margin-top: 0.35rem;
         }
 
         div[data-testid="stFormSubmitButton"] > button:hover {
             background: #003B7A !important;
-            border-color: #003B7A !important;
+            border-color: #263F4D !important;
             transform: translateY(-1px);
         }
 
@@ -862,7 +862,7 @@ def login():
         }
 
         .login-footer strong {
-            color: #003B7A;
+            color: #263F4D;
         }
         </style>
         """,
@@ -1440,8 +1440,7 @@ with st.sidebar:
     pagina = st.radio(
         "Navegación",
         [
-            "Resumen",
-            "Inventario",
+            "Resumen e inventario",
             "Evolución",
             "Riesgos y detalle",
             "Órdenes de compra",
@@ -1807,7 +1806,7 @@ valor_total_col = suma_columna(df_filtrado, COL_COSTE)
 # RESUMEN EJECUTIVO
 # ============================================================
 
-if pagina == "Resumen":
+if pagina in ("Resumen", "Resumen e inventario"):
 
     st.title(
         "Resumen ejecutivo"
@@ -2128,7 +2127,7 @@ if pagina == "Resumen":
 # INVENTARIO
 # ============================================================
 
-elif pagina == "Inventario":
+if pagina in ("Inventario", "Resumen e inventario"):
 
     st.title(
         "Inventario"
