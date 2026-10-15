@@ -3925,10 +3925,17 @@ elif pagina == "Órdenes de compra":
                             subtype="html"
                         )
 
-                        with smtplib.SMTP(servidor, puerto, timeout=30) as smtp:
-                            smtp.starttls()
+                        import ssl
+                        
+                        with smtplib.SMTP_SSL(
+                            servidor,
+                            puerto,
+                            timeout=30,
+                            context=ssl.create_default_context()
+                        ) as smtp:
                             smtp.login(remitente, contrasena)
                             smtp.send_message(mensaje)
+
 
                         st.session_state["firma_ordenes_correo_enviada"] = firma_ordenes
                         st.success(
