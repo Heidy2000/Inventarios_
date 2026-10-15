@@ -724,49 +724,71 @@ def porcentaje(parte, total):
 # LOGIN
 # ============================================================
 
-def _logo_login():
 
-    # Si pones un logo local junto a app.py (logo.png, logo.jpg ...)
-    # se usa ese; si no, se usa la URL de siempre.
-    base = os.path.dirname(os.path.abspath(__file__))
-
-    for nombre in ("logo.png", "logo.jpg", "logo.jpeg", "logo.webp", "logo_aldc.png"):
-        ruta = os.path.join(base, nombre)
-        if os.path.exists(ruta):
-            return ruta
-
-    return LOGO_URL
-
+# ============================================================
+# LOGIN — FONDO BLANCO Y LOGO CENTRADO
+# ============================================================
 
 def login():
 
     st.markdown(
         """
         <style>
+        /* =====================================================
+           FONDO GENERAL BLANCO
+           ===================================================== */
+
         .stApp,
-        [data-testid="stAppViewContainer"] {
-            background:
-                radial-gradient(circle at 85% 12%, rgba(245,130,32,0.13) 0, rgba(245,130,32,0) 32%),
-                linear-gradient(135deg, #F4F6F8 0%, #E9EEF1 100%) !important;
+        [data-testid="stAppViewContainer"],
+        [data-testid="stMain"],
+        section.main {
+            background: #FFFFFF !important;
+        }
+
+        [data-testid="stHeader"] {
+            background: #FFFFFF !important;
         }
 
         .block-container {
-            padding-top: 7vh !important;
+            padding-top: 5vh !important;
+            padding-bottom: 2rem !important;
+            max-width: 1200px !important;
         }
+
+        /* =====================================================
+           TARJETA DE INICIO DE SESIÓN
+           ===================================================== */
 
         div[data-testid="stVerticalBlockBorderWrapper"]:has(.login-marker) {
             background: #FFFFFF !important;
-            border: 1px solid #E0E6EA !important;
+            border: 1px solid #E1E7ED !important;
             border-top: 5px solid #F58220 !important;
             border-radius: 20px !important;
-            box-shadow: 0 18px 45px rgba(38,63,77,0.14) !important;
+            box-shadow: 0 12px 35px rgba(23,45,73,0.09) !important;
             padding: 1.6rem 1.7rem 1.2rem 1.7rem !important;
         }
 
+        /* =====================================================
+           LOGO CENTRADO
+           ===================================================== */
+
         div[data-testid="stImage"] {
-            display: flex;
-            justify-content: center;
+            width: 100% !important;
+            display: flex !important;
+            justify-content: center !important;
+            align-items: center !important;
         }
+
+        div[data-testid="stImage"] img {
+            display: block !important;
+            margin-left: auto !important;
+            margin-right: auto !important;
+            object-fit: contain !important;
+        }
+
+        /* =====================================================
+           TÍTULO Y SUBTÍTULO
+           ===================================================== */
 
         .login-head {
             text-align: center;
@@ -774,7 +796,7 @@ def login():
         }
 
         .login-title {
-            color: #263F4D;
+            color: #193747 !important;
             font-size: 1.65rem;
             font-weight: 800;
             letter-spacing: -0.5px;
@@ -782,7 +804,7 @@ def login():
         }
 
         .login-sub {
-            color: #667892;
+            color: #667892 !important;
             font-size: 0.9rem;
             margin: 0.4rem 0 0 0;
         }
@@ -795,22 +817,28 @@ def login():
             margin: 0.95rem auto 0 auto;
         }
 
+        /* =====================================================
+           FORMULARIO
+           ===================================================== */
+
         div[data-testid="stForm"] {
+            background: #FFFFFF !important;
             border: 0 !important;
             padding: 0 !important;
         }
 
         div[data-testid="stForm"] label p {
-            color: #263F4D !important;
+            color: #193747 !important;
             font-weight: 650 !important;
             font-size: 0.82rem !important;
         }
 
         div[data-baseweb="input"] {
-            background: #F4F7FB !important;
+            background: #FFFFFF !important;
             border: 1px solid #D5DFEB !important;
             border-radius: 10px !important;
             min-height: 46px !important;
+            box-shadow: none !important;
         }
 
         div[data-baseweb="base-input"] {
@@ -820,13 +848,22 @@ def login():
 
         div[data-baseweb="input"]:focus-within {
             border-color: #F58220 !important;
-            box-shadow: 0 0 0 3px rgba(245,130,32,0.15) !important;
+            box-shadow: 0 0 0 3px rgba(245,130,32,0.13) !important;
         }
 
         div[data-baseweb="input"] input {
-            color: #0F2745 !important;
+            color: #193747 !important;
             font-size: 0.95rem !important;
+            background: transparent !important;
         }
+
+        div[data-baseweb="input"] input::placeholder {
+            color: #9AA9BA !important;
+        }
+
+        /* =====================================================
+           BOTÓN INGRESAR
+           ===================================================== */
 
         div[data-testid="stFormSubmitButton"] > button {
             background: #F58220 !important;
@@ -836,67 +873,116 @@ def login():
             min-height: 48px !important;
             font-size: 0.98rem !important;
             font-weight: 700 !important;
-            box-shadow: 0 6px 16px rgba(245,130,32,0.22) !important;
+            box-shadow: 0 5px 14px rgba(245,130,32,0.18) !important;
             margin-top: 0.35rem;
+            transition: all 0.18s ease !important;
         }
 
         div[data-testid="stFormSubmitButton"] > button:hover {
-            background: #003B7A !important;
-            border-color: #263F4D !important;
+            background: #D96B10 !important;
+            border-color: #D96B10 !important;
+            color: #FFFFFF !important;
             transform: translateY(-1px);
         }
 
         div[data-testid="stFormSubmitButton"] > button:focus-visible {
             outline: none !important;
-            box-shadow: 0 0 0 3px rgba(245,130,32,0.45) !important;
+            box-shadow: 0 0 0 3px rgba(245,130,32,0.30) !important;
         }
+
+        /* =====================================================
+           MENSAJES DEL FORMULARIO
+           ===================================================== */
+
+        div[data-testid="stAlert"] {
+            border-radius: 10px !important;
+        }
+
+        /* =====================================================
+           PIE DE TARJETA
+           ===================================================== */
 
         .login-footer {
             margin-top: 1.1rem;
             padding-top: 0.9rem;
             border-top: 1px solid #E3EAF3;
             text-align: center;
-            color: #7A8AA0;
+            color: #7A8AA0 !important;
             font-size: 0.76rem;
             line-height: 1.6;
         }
 
         .login-footer strong {
-            color: #263F4D;
+            color: #193747 !important;
+        }
+
+        /* =====================================================
+           AJUSTES PARA PANTALLAS PEQUEÑAS
+           ===================================================== */
+
+        @media (max-width: 768px) {
+            .block-container {
+                padding-top: 2vh !important;
+                padding-left: 1rem !important;
+                padding-right: 1rem !important;
+            }
+
+            div[data-testid="stVerticalBlockBorderWrapper"]:has(.login-marker) {
+                padding: 1.2rem 1rem 1rem 1rem !important;
+            }
+
+            .login-title {
+                font-size: 1.45rem;
+            }
         }
         </style>
         """,
         unsafe_allow_html=True
     )
 
+    # --------------------------------------------------------
+    # DISTRIBUCIÓN: TARJETA CENTRADA
+    # --------------------------------------------------------
+
     col_izq, col_centro, col_der = st.columns(
-        [1, 1.15, 1]
+        [1, 1.15, 1],
+        gap="small"
     )
 
     with col_centro:
 
         with st.container(border=True):
 
+            # Marcador para aplicar el CSS exclusivamente
+            # a la tarjeta de inicio de sesión.
             st.markdown(
                 '<span class="login-marker"></span>',
                 unsafe_allow_html=True
             )
 
+            # Logo centrado
             st.image(
                 _logo_login(),
                 width=190
             )
 
+            # Encabezado
             st.markdown(
                 """
                 <div class="login-head">
                     <div class="login-title">Inventarios ALDC</div>
-                    <p class="login-sub">Plataforma de gestión y analítica de inventarios</p>
+                    <p class="login-sub">
+                        Plataforma de gestión y analítica de inventarios
+                    </p>
                     <div class="login-accent"></div>
                 </div>
                 """,
                 unsafe_allow_html=True
             )
+
+            # ------------------------------------------------
+            # FORMULARIO DE AUTENTICACIÓN
+            # ------------------------------------------------
 
             with st.form("form_login", clear_on_submit=False):
 
@@ -918,7 +1004,13 @@ def login():
                     use_container_width=True
                 )
 
+            # ------------------------------------------------
+            # VALIDACIÓN DE CREDENCIALES
+            # ------------------------------------------------
+
             if ingresar:
+
+                usuario = usuario.strip()
 
                 if (
                     usuario in USUARIOS
@@ -946,6 +1038,10 @@ def login():
                     st.error(
                         "Usuario o contraseña incorrectos."
                     )
+
+            # ------------------------------------------------
+            # PIE DE TARJETA
+            # ------------------------------------------------
 
             st.markdown(
                 """
