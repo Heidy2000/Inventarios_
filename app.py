@@ -32,11 +32,11 @@ EPS = 1e-7
 # PALETA INSTITUCIONAL — REFERENCIA ÁREA LIMPIA
 # ============================================================
 
-AZUL = "#315B68"          # Azul petróleo principal
-AZUL_OSCURO = "#203F49"   # Azul petróleo profundo
-AZUL_MEDIO = "#477784"    # Azul petróleo para navegación
-AZUL_CLARO = "#A9C4CB"    # Azul claro para gráficos
-AZUL_SUAVE = "#EDF3F4"    # Fondo azul muy suave
+AZUL = "#254B60"
+AZUL_OSCURO = "#193747"
+AZUL_MEDIO = "#37647B"
+AZUL_CLARO = "#A9C4D0"
+AZUL_SUAVE = "#EDF3F6"
 
 VERDE = "#87D33F"
 VERDE_CLARO = "#B6E879"
