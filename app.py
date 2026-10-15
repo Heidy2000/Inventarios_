@@ -3551,6 +3551,10 @@ elif pagina == "Riesgos y detalle":
     )
 
 
+df_historico_oc = pd.read_excel(
+    "Historico_inventarios.xlsx"
+)
+
 
 elif pagina == "Órdenes de compra":
 
@@ -3666,55 +3670,54 @@ elif pagina == "Órdenes de compra":
 
         return texto.upper()
 
+        def oc_identificar_mes(columna):
+            """
+            Reconoce columnas como:
+            SALIDA JUNIO 2025
+            SALIDA AGOSTO 2026
+            """
+        
+            texto = oc_normalizar(columna)
+        
+            coincidencia = re.fullmatch(
+                r"salida([a-z]+)(20\d{2})",
+                texto
+            )
+        
+            if not coincidencia:
+                return None
+        
+            nombre_mes = coincidencia.group(1)
+            anio = int(coincidencia.group(2))
+        
+            meses = {
+                "enero": 1,
+                "febrero": 2,
+                "marzo": 3,
+                "abril": 4,
+                "mayo": 5,
+                "junio": 6,
+                "julio": 7,
+                "agosto": 8,
+                "septiembre": 9,
+                "setiembre": 9,
+                "octubre": 10,
+                "noviembre": 11,
+                "diciembre": 12
+            }
+        
+            mes = meses.get(nombre_mes)
+        
+            if mes is None:
+                return None
+        
+            return {
+                "columna": columna,
+                "anio": anio,
+                "mes": mes,
+                "periodo": anio * 12 + mes
+            }
 
-    def oc_identificar_mes(columna):
-        """
-        Reconoce encabezados como:
-        Salidas mayo 2026
-        Salidas enero 2026
-        """
-
-        encabezado = oc_normalizar(columna)
-
-        coincidencia = re.fullmatch(
-            r"salidas([a-z]+)(20\d{2})",
-            encabezado
-        )
-
-        if not coincidencia:
-            return None
-
-        nombre_mes = coincidencia.group(1)
-        anio = int(coincidencia.group(2))
-
-        meses = {
-            "enero": 1,
-            "febrero": 2,
-            "marzo": 3,
-            "abril": 4,
-            "mayo": 5,
-            "junio": 6,
-            "julio": 7,
-            "agosto": 8,
-            "septiembre": 9,
-            "setiembre": 9,
-            "octubre": 10,
-            "noviembre": 11,
-            "diciembre": 12
-        }
-
-        mes = meses.get(nombre_mes)
-
-        if mes is None:
-            return None
-
-        return {
-            "columna": columna,
-            "anio": anio,
-            "mes": mes,
-            "periodo": anio * 12 + mes,
-            "etiqueta": f"{calendar.month_name[mes]} {anio}"
-        }
 
 
     def oc_es_mes_consecutivo(meses):
