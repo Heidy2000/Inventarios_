@@ -3551,431 +3551,1670 @@ elif pagina == "Riesgos y detalle":
     )
 
 
-# ============================================================
-# PÁGINA: ÓRDENES DE COMPRA
-# Alertas por referencias con inventario > 3 meses y OC > 30%
-# del stock total existente en el histórico.
-# ============================================================
 
 elif pagina == "Órdenes de compra":
 
-    import hashlib
     import io
+    import re
+    import hashlib
     import smtplib
+    import ssl
+    import html
     import unicodedata
+    import calendar
+
+    from datetime import datetime
     from email.message import EmailMessage
 
-    st.title("Órdenes de compra")
-    st.caption(
-        "Identifica órdenes que incluyen referencias con inventario "
-        "de más de 3 meses y cuya cantidad solicitada supera el 30% "
-        "del stock total registrado en el histórico."
-    )
+    import pandas as pd
+    import streamlit as st
 
-    def _normalizar_nombre_columna(valor):
-        texto = str(valor).strip().lower()
+
+    # ============================================================
+    # 1. FUNCIONES AUXILIARES
+    # ============================================================
+
+    def oc_normalizar(texto):
+        """Normaliza nombres de columnas y textos."""
+        texto = str(texto).strip().lower()
+
         texto = unicodedata.normalize("NFKD", texto)
-        texto = "".join(c for c in texto if not unicodedata.combining(c))
+        texto = "".join(
+            caracter
+            for caracter in texto
+            if not unicodedata.combining(caracter)
+        )
+
         return re.sub(r"[^a-z0-9]", "", texto)
 
-    def _buscar_columna(df_busqueda, candidatos):
+
+    def oc_buscar_columna(dataframe, candidatos):
+        """Busca una columna aunque cambien tildes, espacios o mayúsculas."""
+
         mapa = {
-            _normalizar_nombre_columna(c): c
-            for c in df_busqueda.columns
+            oc_normalizar(columna): columna
+            for columna in dataframe.columns
         }
+
         for candidato in candidatos:
-            encontrada = mapa.get(_normalizar_nombre_columna(candidato))
+            encontrada = mapa.get(oc_normalizar(candidato))
+
             if encontrada is not None:
                 return encontrada
+
         return None
 
-    def _normalizar_referencia(serie):
-        return (
-            serie.astype(str)
-            .str.strip()
-            .str.replace(r"\.0$", "", regex=True)
-            .replace({"nan": "", "None": "", "NaT": ""})
+
+    def oc_numero(valor):
+        """Convierte números y textos numéricos a formato decimal."""
+
+        if pd.isna(valor):
+            return 0.0
+
+        if isinstance(valor, (int, float)):
+            return float(valor)
+
+        texto = str(valor).strip()
+
+        if not texto or texto.lower() in {
+            "nan", "none", "null", "-"
+        }:
+            return 0.0
+
+        texto = (
+            texto.replace("$", "")
+            .replace(" ", "")
+            .replace("\u00a0", "")
         )
 
-    def _numero_seguro(serie):
-        if pd.api.types.is_numeric_dtype(serie):
-            return pd.to_numeric(serie, errors="coerce").fillna(0)
-        texto = serie.astype(str).str.strip()
-        # Admite números con separadores de miles y coma decimal.
-        texto = texto.str.replace("$", "", regex=False).str.replace(" ", "", regex=False)
-        ambos = texto.str.contains(",", na=False) & texto.str.contains(r"\.", na=False)
-        texto.loc[ambos] = (
-            texto.loc[ambos].str.replace(".", "", regex=False)
-            .str.replace(",", ".", regex=False)
-        )
-        solo_coma = texto.str.contains(",", na=False) & ~texto.str.contains(r"\.", na=False)
-        texto.loc[solo_coma] = texto.loc[solo_coma].str.replace(",", ".", regex=False)
-        return pd.to_numeric(texto, errors="coerce").fillna(0)
+        # Formato colombiano: 1.234,56
+        if "," in texto and "." in texto:
+            if texto.rfind(",") > texto.rfind("."):
+                texto = texto.replace(".", "")
+                texto = texto.replace(",", ".")
+            else:
+                # Formato 1,234.56
+                texto = texto.replace(",", "")
 
-    st.markdown("### 1. Cargar archivo de órdenes")
+        elif "," in texto:
+            partes = texto.split(",")
+
+            if len(partes[-1]) in (1, 2):
+                texto = texto.replace(",", ".")
+            else:
+                texto = texto.replace(",", "")
+
+        try:
+            return float(texto)
+        except (ValueError, TypeError):
+            return 0.0
+
+
+    def oc_normalizar_referencia(valor):
+        """Normaliza códigos sin convertirlos innecesariamente a números."""
+
+        if pd.isna(valor):
+            return ""
+
+        if isinstance(valor, float) and valor.is_integer():
+            valor = int(valor)
+
+        texto = str(valor).strip()
+
+        if texto.lower() in {"nan", "none", "null"}:
+            return ""
+
+        return texto.upper()
+
+
+    def oc_identificar_mes(columna):
+        """
+        Reconoce encabezados como:
+        Salidas mayo 2026
+        Salidas enero 2026
+        """
+
+        encabezado = oc_normalizar(columna)
+
+        coincidencia = re.fullmatch(
+            r"salidas([a-z]+)(20\d{2})",
+            encabezado
+        )
+
+        if not coincidencia:
+            return None
+
+        nombre_mes = coincidencia.group(1)
+        anio = int(coincidencia.group(2))
+
+        meses = {
+            "enero": 1,
+            "febrero": 2,
+            "marzo": 3,
+            "abril": 4,
+            "mayo": 5,
+            "junio": 6,
+            "julio": 7,
+            "agosto": 8,
+            "septiembre": 9,
+            "setiembre": 9,
+            "octubre": 10,
+            "noviembre": 11,
+            "diciembre": 12
+        }
+
+        mes = meses.get(nombre_mes)
+
+        if mes is None:
+            return None
+
+        return {
+            "columna": columna,
+            "anio": anio,
+            "mes": mes,
+            "periodo": anio * 12 + mes,
+            "etiqueta": f"{calendar.month_name[mes]} {anio}"
+        }
+
+
+    def oc_es_mes_consecutivo(meses):
+        """Comprueba que los meses sean consecutivos."""
+
+        if len(meses) < 6:
+            return False
+
+        periodos = sorted(
+            [mes["periodo"] for mes in meses]
+        )
+
+        ultimos_seis = periodos[-6:]
+
+        return all(
+            ultimos_seis[i] - ultimos_seis[i - 1] == 1
+            for i in range(1, 6)
+        )
+
+
+    def oc_es_critico(valor):
+        """Identifica valores de criticidad si existe esa columna."""
+
+        texto = oc_normalizar(valor)
+
+        return texto in {
+            "si",
+            "s",
+            "true",
+            "1",
+            "critico",
+            "alta",
+            "alto",
+            "prioritario"
+        }
+
+
+    # ============================================================
+    # 2. ENCABEZADO Y CARGA DEL ARCHIVO DE ÓRDENES
+    # ============================================================
+
+    st.title("Órdenes de compra")
+
+    st.markdown(
+        """
+        Analiza las cantidades solicitadas frente al inventario
+        consolidado, el consumo reciente y la cobertura proyectada.
+        """
+    )
+
+    st.info(
+        "La evaluación utiliza los seis meses más recientes "
+        "disponibles en el histórico. El stock se consolida por "
+        "referencia sumando todas las bodegas."
+    )
+
     archivo_ordenes = st.file_uploader(
-        "Carga el Excel o CSV con las órdenes de compra",
+        "Cargar archivo de órdenes de compra",
         type=["xlsx", "xls", "csv"],
         key="archivo_ordenes_compra"
     )
 
-    st.info(
-        "El archivo debe incluir el identificador de la orden, la referencia "
-        "del artículo y la cantidad solicitada. Se aceptan encabezados como "
-        "IdOrden, Cod Articulo / Id Articulo y Cantidad. Si existe una columna "
-        "Estado, se excluyen registros anulados, cancelados, cerrados o recibidos."
-    )
 
-    if archivo_ordenes is not None:
+    if archivo_ordenes is None:
+
+        st.warning(
+            "Carga el archivo de órdenes para ejecutar el análisis."
+        )
+
+    else:
+
+        # --------------------------------------------------------
+        # Leer el archivo
+        # --------------------------------------------------------
+
         try:
-            bytes_ordenes = archivo_ordenes.getvalue()
-            firma_ordenes = hashlib.sha256(bytes_ordenes).hexdigest()
+
+            contenido_archivo = archivo_ordenes.getvalue()
 
             if archivo_ordenes.name.lower().endswith(".csv"):
+
                 try:
                     df_ordenes_original = pd.read_csv(
-                        io.BytesIO(bytes_ordenes), sep=None, engine="python"
+                        io.BytesIO(contenido_archivo),
+                        sep=None,
+                        engine="python",
+                        encoding="utf-8-sig"
                     )
+
                 except UnicodeDecodeError:
                     df_ordenes_original = pd.read_csv(
-                        io.BytesIO(bytes_ordenes), sep=None, engine="python",
+                        io.BytesIO(contenido_archivo),
+                        sep=None,
+                        engine="python",
                         encoding="latin-1"
                     )
+
             else:
-                df_ordenes_original = pd.read_excel(io.BytesIO(bytes_ordenes))
 
-            col_orden = _buscar_columna(
-                df_ordenes_original,
-                ["IdOrden", "Id Orden", "Orden de compra", "Codigo de orden",
-                 "Código de orden", "Numero de orden", "Número de orden", "OC"]
-            )
-            col_referencia_oc = _buscar_columna(
-                df_ordenes_original,
-                ["Cod Articulo", "Código Articulo", "Codigo Articulo",
-                 "Id Articulo", "IdArtículo", "Referencia", "Código de artículo",
-                 "Codigo de articulo", "Material"]
-            )
-            col_cantidad_oc = _buscar_columna(
-                df_ordenes_original,
-                ["Cantidad", "Cantidad solicitada", "Cantidad ordenada",
-                 "Cantidad OC", "Qty", "Cantidad requerida"]
-            )
-            col_estado_oc = _buscar_columna(
-                df_ordenes_original,
-                ["Estado", "Status", "Estado de la orden"]
+                df_ordenes_original = pd.read_excel(
+                    io.BytesIO(contenido_archivo)
+                )
+
+        except Exception as error:
+
+            st.error(
+                f"No fue posible leer el archivo: {error}"
             )
 
-            faltantes_oc = []
-            if col_orden is None:
-                faltantes_oc.append("IdOrden / Orden de compra")
-            if col_referencia_oc is None:
-                faltantes_oc.append("Cod Articulo / Id Articulo / Referencia")
-            if col_cantidad_oc is None:
-                faltantes_oc.append("Cantidad")
+            st.stop()
 
-            if faltantes_oc:
-                st.error(
-                    "No pude identificar estas columnas en el archivo: "
-                    + ", ".join(faltantes_oc)
-                    + ". Revisa los encabezados y vuelve a cargarlo."
-                )
-                st.write("Encabezados encontrados:", list(df_ordenes_original.columns))
-            elif not COL_ANTIGUEDAD or COL_ANTIGUEDAD not in df.columns:
-                st.error(
-                    "El histórico no contiene una columna de antigüedad reconocida. "
-                    "No es posible validar la regla de más de 3 meses."
-                )
-            elif not COL_STOCK or COL_STOCK not in df.columns:
-                st.error(
-                    "No se encontró la columna de stock en el histórico. "
-                    "No es posible comparar las cantidades de las órdenes."
-                )
-            elif _buscar_columna(df, ["Codigo Articulo", "Código Articulo",
-                                      "Cod Articulo", "Id Articulo",
-                                      "Referencia", "Material"]) is None:
-                st.error(
-                    "No se encontró una columna de referencia de artículo "
-                    "en el histórico de inventarios."
-                )
-            else:
-                col_referencia_hist = _buscar_columna(
-                    df, ["Codigo Articulo", "Código Articulo", "Cod Articulo",
-                         "Id Articulo", "Referencia", "Material"]
-                )
-                col_articulo_hist = _buscar_columna(
-                    df, ["Articulo", "Artículo", "Descripcion", "Descripción"]
-                )
-                col_bodega_hist = _buscar_columna(
-                    df, ["Bodega", "Almacen", "Almacén"]
-                )
 
-                # El histórico se consolida por referencia: stock total y
-                # stock ubicado en categorías con antigüedad superior a 3 meses.
-                hist = df.copy()
-                hist["_ref_oc"] = _normalizar_referencia(hist[col_referencia_hist])
-                hist["_stock_oc"] = _numero_seguro(hist[COL_STOCK]).clip(lower=0)
-                hist["_edad_oc"] = hist[COL_ANTIGUEDAD].astype(str).str.strip()
-                hist["_edad_mayor_3m"] = hist["_edad_oc"].str.contains(
-                    r"Entre 4 y 6 meses|Entre 7 y 12 meses|Mayor a 12 meses|"
-                    r"Mayor de 3 meses|Mas de 3 meses|Más de 3 meses",
-                    case=False, na=False, regex=True
-                )
-                hist = hist[hist["_ref_oc"].ne("")].copy()
+        if df_ordenes_original.empty:
 
-                agregaciones_hist = {
-                    "Stock histórico": ("_stock_oc", "sum"),
-                    "Stock con antigüedad > 3 meses": (
-                        "_stock_oc",
-                        lambda x: float(x[hist.loc[x.index, "_edad_mayor_3m"]].sum())
-                    ),
-                    "Categorías de antigüedad": (
-                        "_edad_oc",
-                        lambda x: ", ".join(sorted(set(
-                            str(v) for v in x
-                            if pd.notna(v) and str(v).strip()
-                        )))
-                    )
+            st.error(
+                "El archivo de órdenes no contiene registros."
+            )
+
+            st.stop()
+
+
+        # ========================================================
+        # 3. IDENTIFICAR COLUMNAS DE LAS ÓRDENES
+        # ========================================================
+
+        col_orden = oc_buscar_columna(
+            df_ordenes_original,
+            [
+                "IdOrden",
+                "ID Orden",
+                "Id Orden",
+                "Orden",
+                "Número de orden",
+                "Numero de orden"
+            ]
+        )
+
+        col_referencia_oc = oc_buscar_columna(
+            df_ordenes_original,
+            [
+                "Cod Articulo",
+                "Código Artículo",
+                "Codigo Articulo",
+                "Id Articulo",
+                "Código de artículo",
+                "Codigo de articulo",
+                "Referencia",
+                "Código"
+            ]
+        )
+
+        col_cantidad_oc = oc_buscar_columna(
+            df_ordenes_original,
+            [
+                "Cantidad",
+                "Cantidad solicitada",
+                "Cantidad ordenada"
+            ]
+        )
+
+        col_estado_oc = oc_buscar_columna(
+            df_ordenes_original,
+            ["Estado", "Estado Orden", "Estado de la orden"]
+        )
+
+        col_grupo_oc = oc_buscar_columna(
+            df_ordenes_original,
+            ["Grupo"]
+        )
+
+        col_req_oc = oc_buscar_columna(
+            df_ordenes_original,
+            ["Req", "Requisición", "Requisicion"]
+        )
+
+        col_fecha_oc = oc_buscar_columna(
+            df_ordenes_original,
+            ["Fecha", "Fecha Orden", "Fecha de orden"]
+        )
+
+
+        columnas_faltantes = []
+
+        if col_orden is None:
+            columnas_faltantes.append("IdOrden")
+
+        if col_referencia_oc is None:
+            columnas_faltantes.append("Cod Articulo o Id Articulo")
+
+        if col_cantidad_oc is None:
+            columnas_faltantes.append("Cantidad")
+
+
+        if columnas_faltantes:
+
+            st.error(
+                "Faltan columnas obligatorias: "
+                + ", ".join(columnas_faltantes)
+            )
+
+            st.write(
+                "Columnas encontradas en el archivo:",
+                list(df_ordenes_original.columns)
+            )
+
+            st.stop()
+
+
+        # ========================================================
+        # 4. PREPARAR LAS ÓRDENES
+        # ========================================================
+
+        oc = pd.DataFrame()
+
+        oc["_orden_oc"] = (
+            df_ordenes_original[col_orden]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+        )
+
+        oc["_ref_oc"] = (
+            df_ordenes_original[col_referencia_oc]
+            .apply(oc_normalizar_referencia)
+        )
+
+        oc["_cantidad_oc"] = (
+            df_ordenes_original[col_cantidad_oc]
+            .apply(oc_numero)
+        )
+
+        if col_estado_oc is not None:
+
+            oc["_estado_oc"] = (
+                df_ordenes_original[col_estado_oc]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+            )
+
+        else:
+
+            oc["_estado_oc"] = "Sin estado informado"
+
+
+        if col_grupo_oc is not None:
+            oc["Grupo"] = df_ordenes_original[col_grupo_oc]
+
+        if col_req_oc is not None:
+            oc["Req"] = df_ordenes_original[col_req_oc]
+
+        if col_fecha_oc is not None:
+            oc["Fecha"] = df_ordenes_original[col_fecha_oc]
+
+
+        # Excluir órdenes que no deben considerarse pendientes.
+        estados_no_activos = (
+            r"anulad|cancelad|cerrad|recibid|finaliz|completad"
+        )
+
+        oc["_estado_normalizado"] = (
+            oc["_estado_oc"]
+            .apply(oc_normalizar)
+        )
+
+        oc = oc[
+            ~oc["_estado_normalizado"].str.contains(
+                estados_no_activos,
+                regex=True,
+                na=False
+            )
+        ].copy()
+
+        oc = oc[
+            (oc["_orden_oc"] != "")
+            & (oc["_ref_oc"] != "")
+        ].copy()
+
+        oc = oc[
+            oc["_cantidad_oc"] > 0
+        ].copy()
+
+
+        if oc.empty:
+
+            st.warning(
+                "No hay órdenes activas con referencias y cantidades "
+                "válidas para analizar."
+            )
+
+            st.stop()
+
+
+        # Consolidar registros repetidos de la misma orden y referencia.
+        columnas_agrupacion = [
+            "_orden_oc",
+            "_ref_oc"
+        ]
+
+        agregaciones = {
+            "_cantidad_oc": "sum",
+            "_estado_oc": "first"
+        }
+
+        for columna in ["Grupo", "Req", "Fecha"]:
+
+            if columna in oc.columns:
+                agregaciones[columna] = "first"
+
+        oc = (
+            oc.groupby(
+                columnas_agrupacion,
+                as_index=False,
+                dropna=False
+            )
+            .agg(agregaciones)
+        )
+
+
+        # Cantidad pendiente consolidada de TODAS las órdenes activas
+        # incluidas en el archivo, para cada referencia.
+        pendientes_por_referencia = (
+            oc.groupby("_ref_oc", as_index=False)
+            .agg(
+                **{
+                    "Cantidad total pendiente referencia":
+                        ("_cantidad_oc", "sum")
                 }
-                if col_articulo_hist:
-                    agregaciones_hist["Artículo"] = (col_articulo_hist, "first")
-                if col_bodega_hist:
-                    agregaciones_hist["Bodegas"] = (
-                        col_bodega_hist,
-                        lambda x: ", ".join(sorted(set(
-                            str(v) for v in x if pd.notna(v) and str(v).strip()
-                        )))
-                    )
+            )
+        )
 
-                hist_ref = hist.groupby("_ref_oc", as_index=False).agg(**agregaciones_hist)
 
-                oc = df_ordenes_original.copy()
-                oc["_orden_oc"] = _normalizar_referencia(oc[col_orden])
-                oc["_ref_oc"] = _normalizar_referencia(oc[col_referencia_oc])
-                oc["_cantidad_oc"] = _numero_seguro(oc[col_cantidad_oc])
-                oc = oc[
-                    oc["_orden_oc"].ne("")
-                    & oc["_ref_oc"].ne("")
-                    & (oc["_cantidad_oc"] > 0)
-                ].copy()
+        # ========================================================
+        # 5. PREPARAR EL HISTÓRICO DE INVENTARIO
+        # ========================================================
 
-                if col_estado_oc:
-                    estados = oc[col_estado_oc].astype(str).str.lower()
-                    estados_no_vigentes = (
-                        estados.str.contains(
-                            r"anulad|cancelad|cerrad|recibid|finaliz|completad",
-                            na=False
-                        )
-                    )
-                    oc = oc[~estados_no_vigentes].copy()
+        # IMPORTANTE:
+        # df debe ser la base COMPLETA de inventarios, sin filtros
+        # de bodega, área o artículo aplicados por la interfaz.
+        # De lo contrario, no se podría sumar el stock de todas
+        # las bodegas.
 
-                # Consolidar renglones repetidos de una misma orden y referencia.
-                claves_oc = ["_orden_oc", "_ref_oc"]
-                extras_oc = {}
-                for posible in ["Grupo", "Req", "Fecha", "Estado"]:
-                    col_extra = _buscar_columna(oc, [posible])
-                    if col_extra and col_extra not in [col_orden, col_referencia_oc,
-                                                       col_cantidad_oc]:
-                        extras_oc[posible] = (col_extra, "first")
+        if "df" not in globals() or not isinstance(df, pd.DataFrame):
 
-                agg_oc = {"Cantidad ordenada": ("_cantidad_oc", "sum")}
-                for nombre_extra, (col_extra, metodo) in extras_oc.items():
-                    agg_oc[nombre_extra] = (col_extra, metodo)
-                oc_agrupada = oc.groupby(claves_oc, as_index=False).agg(**agg_oc)
+            st.error(
+                "No se encontró la base de inventario 'df'."
+            )
 
-                alertas_oc = oc_agrupada.merge(
-                    hist_ref, on="_ref_oc", how="left"
-                )
-                alertas_oc["Stock histórico"] = alertas_oc["Stock histórico"].fillna(0)
-                alertas_oc["Stock con antigüedad > 3 meses"] = (
-                    alertas_oc["Stock con antigüedad > 3 meses"].fillna(0)
-                )
-                alertas_oc["% de la orden sobre el stock"] = (
-                    alertas_oc["Cantidad ordenada"]
-                    .div(alertas_oc["Stock histórico"].replace(0, pd.NA))
-                    .mul(100)
-                )
+            st.stop()
 
-                alertas_oc = alertas_oc[
-                    (alertas_oc["Stock con antigüedad > 3 meses"] > 0)
-                    & (alertas_oc["Stock histórico"] > 0)
-                    & (
-                        alertas_oc["Cantidad ordenada"]
-                        > alertas_oc["Stock histórico"] * 0.30
-                    )
-                ].copy()
 
-                alertas_oc = alertas_oc.rename(
-                    columns={"_orden_oc": "Orden de compra", "_ref_oc": "Referencia"}
-                )
-                columnas_salida = [
-                    "Orden de compra", "Referencia", "Artículo",
-                    "Cantidad ordenada", "Stock histórico",
-                    "Stock con antigüedad > 3 meses",
-                    "% de la orden sobre el stock",
-                    "Categorías de antigüedad", "Bodegas",
-                    "Grupo", "Req", "Fecha", "Estado"
+        if df.empty:
+
+            st.error(
+                "La base de inventario está vacía."
+            )
+
+            st.stop()
+
+
+        col_referencia_inv = oc_buscar_columna(
+            df,
+            [
+                "Código de artículo",
+                "Codigo de articulo",
+                "Código Artículo",
+                "Cod Articulo",
+                "Id Articulo",
+                "Referencia",
+                "Código"
+            ]
+        )
+
+        col_stock_inv = None
+
+        if (
+            "COL_STOCK" in globals()
+            and isinstance(COL_STOCK, str)
+            and COL_STOCK in df.columns
+        ):
+            col_stock_inv = COL_STOCK
+
+        if col_stock_inv is None:
+
+            col_stock_inv = oc_buscar_columna(
+                df,
+                [
+                    "Stock total",
+                    "Stock",
+                    "Existencias",
+                    "Stock actual",
+                    "Cantidad disponible"
                 ]
-                columnas_salida = [
-                    c for c in columnas_salida if c in alertas_oc.columns
+            )
+
+
+        col_articulo_inv = oc_buscar_columna(
+            df,
+            [
+                "Artículo",
+                "Articulo",
+                "Descripción",
+                "Descripcion",
+                "Nombre artículo",
+                "Nombre articulo"
+            ]
+        )
+
+        col_bodega_inv = oc_buscar_columna(
+            df,
+            ["Bodega", "Nombre bodega"]
+        )
+
+        col_edad_inv = None
+
+        if (
+            "COL_ANTIGUEDAD" in globals()
+            and isinstance(COL_ANTIGUEDAD, str)
+            and COL_ANTIGUEDAD in df.columns
+        ):
+            col_edad_inv = COL_ANTIGUEDAD
+
+        if col_edad_inv is None:
+
+            col_edad_inv = oc_buscar_columna(
+                df,
+                [
+                    "Antigüedad",
+                    "Antiguedad",
+                    "Clasificación antigüedad",
+                    "Clasificacion antiguedad"
                 ]
-                alertas_oc = alertas_oc[columnas_salida].sort_values(
-                    "% de la orden sobre el stock", ascending=False
+            )
+
+
+        col_criticidad_inv = oc_buscar_columna(
+            df,
+            [
+                "Criticidad",
+                "Crítico",
+                "Critico",
+                "Artículo crítico",
+                "Articulo critico",
+                "Es crítico",
+                "Es critico"
+            ]
+        )
+
+
+        if col_referencia_inv is None:
+
+            st.error(
+                "No se encontró la columna de referencia en el "
+                "inventario."
+            )
+
+            st.stop()
+
+
+        if col_stock_inv is None:
+
+            st.error(
+                "No se encontró la columna de stock. "
+                "Verifica COL_STOCK y los encabezados del inventario."
+            )
+
+            st.stop()
+
+
+        # Selección de campos relevantes del inventario.
+        hist = pd.DataFrame()
+
+        hist["_ref_oc"] = (
+            df[col_referencia_inv]
+            .apply(oc_normalizar_referencia)
+        )
+
+        hist["_stock_oc"] = (
+            df[col_stock_inv]
+            .apply(oc_numero)
+            .clip(lower=0)
+        )
+
+        if col_articulo_inv is not None:
+            hist["_articulo_oc"] = (
+                df[col_articulo_inv].fillna("").astype(str)
+            )
+        else:
+            hist["_articulo_oc"] = ""
+
+        if col_bodega_inv is not None:
+            hist["_bodega_oc"] = (
+                df[col_bodega_inv].fillna("").astype(str)
+            )
+        else:
+            hist["_bodega_oc"] = ""
+
+        if col_edad_inv is not None:
+            hist["_edad_oc"] = (
+                df[col_edad_inv].fillna("").astype(str)
+            )
+        else:
+            hist["_edad_oc"] = ""
+
+        if col_criticidad_inv is not None:
+            hist["_critico_oc"] = (
+                df[col_criticidad_inv]
+                .apply(oc_es_critico)
+            )
+        else:
+            hist["_critico_oc"] = False
+
+
+        hist = hist[
+            hist["_ref_oc"] != ""
+        ].copy()
+
+
+        # ========================================================
+        # 6. IDENTIFICAR LOS MESES DISPONIBLES
+        # ========================================================
+
+        meses_disponibles = []
+
+        for columna in df.columns:
+
+            mes_info = oc_identificar_mes(columna)
+
+            if mes_info is not None:
+                meses_disponibles.append(mes_info)
+
+
+        meses_disponibles = sorted(
+            meses_disponibles,
+            key=lambda x: x["periodo"]
+        )
+
+        if not meses_disponibles:
+
+            st.error(
+                "No se encontraron columnas de salidas con el formato "
+                "'Salidas mayo 2026'."
+            )
+
+            st.write(
+                "Verifica los encabezados de las salidas mensuales."
+            )
+
+            st.stop()
+
+
+        # Últimos seis meses disponibles en el documento.
+        meses_6 = meses_disponibles[-6:]
+
+        # Hasta quince meses disponibles para el análisis complementario.
+        meses_15 = meses_disponibles[-15:]
+
+
+        seis_meses_completos = (
+            len(meses_6) == 6
+            and oc_es_mes_consecutivo(meses_6)
+        )
+
+
+        # Mostrar al usuario los periodos detectados.
+        st.subheader("Periodo de análisis")
+
+        if len(meses_6) == 6:
+
+            nombres_meses = [
+                f"{mes['etiqueta']}"
+                for mes in meses_6
+            ]
+
+            st.caption(
+                "Meses utilizados: "
+                + " · ".join(nombres_meses)
+            )
+
+        else:
+
+            st.warning(
+                "El archivo tiene menos de seis meses de salidas. "
+                "No se calculará una cobertura definitiva."
+            )
+
+
+        if len(meses_disponibles) > 6:
+
+            st.caption(
+                f"Se detectaron {len(meses_disponibles)} meses "
+                "de histórico. Los meses anteriores se utilizarán "
+                "para revisar la ausencia de consumo."
+            )
+
+
+        if not seis_meses_completos:
+
+            st.warning(
+                "Los seis meses más recientes no están completos "
+                "o no son consecutivos. Las referencias quedarán "
+                "marcadas para validación del histórico."
+            )
+
+
+        # ========================================================
+        # 7. CALCULAR SALIDAS DE LOS ÚLTIMOS 6 Y 15 MESES
+        # ========================================================
+
+        # Se aplica valor absoluto a cada registro antes de sumar,
+        # para evitar que signos opuestos se cancelen entre sí.
+
+        columnas_6 = [
+            mes["columna"]
+            for mes in meses_6
+        ]
+
+        columnas_15 = [
+            mes["columna"]
+            for mes in meses_15
+        ]
+
+
+        for columna in set(columnas_6 + columnas_15):
+
+            hist[f"_salida_{oc_normalizar(columna)}"] = (
+                df[columna]
+                .apply(oc_numero)
+                .abs()
+                .values
+            )
+
+
+        hist["_salidas_6_oc"] = 0.0
+        hist["_salidas_15_oc"] = 0.0
+
+
+        if columnas_6:
+
+            hist["_salidas_6_oc"] = sum(
+                hist[f"_salida_{oc_normalizar(columna)}"]
+                for columna in columnas_6
+            )
+
+
+        if columnas_15:
+
+            hist["_salidas_15_oc"] = sum(
+                hist[f"_salida_{oc_normalizar(columna)}"]
+                for columna in columnas_15
+            )
+
+
+        # ========================================================
+        # 8. CONSOLIDAR STOCK Y CONSUMO POR REFERENCIA
+        # ========================================================
+
+        hist["_stock_mas_3m_oc"] = 0.0
+
+        if col_edad_inv is not None:
+
+            patron_edad = (
+                r"entre 4 y 6 meses|"
+                r"entre 7 y 12 meses|"
+                r"mayor a 12 meses|"
+                r"mayor de 12 meses|"
+                r"mas de 3 meses|"
+                r"mayor de 3 meses"
+            )
+
+            mascara_edad = (
+                hist["_edad_oc"]
+                .apply(oc_normalizar)
+                .str.contains(
+                    oc_normalizar("entre 4 y 6 meses")
+                    + "|"
+                    + oc_normalizar("entre 7 y 12 meses")
+                    + "|"
+                    + oc_normalizar("mayor a 12 meses")
+                    + "|"
+                    + oc_normalizar("mayor de 12 meses")
+                    + "|"
+                    + oc_normalizar("mas de 3 meses")
+                    + "|"
+                    + oc_normalizar("mayor de 3 meses"),
+                    regex=True,
+                    na=False
+                )
+            )
+
+            hist.loc[
+                mascara_edad,
+                "_stock_mas_3m_oc"
+            ] = hist.loc[
+                mascara_edad,
+                "_stock_oc"
+            ]
+
+
+        stock_por_referencia = (
+            hist.groupby("_ref_oc", as_index=False)
+            .agg(
+                **{
+                    "Stock consolidado":
+                        ("_stock_oc", "sum"),
+
+                    "Stock con antigüedad mayor a 3 meses":
+                        ("_stock_mas_3m_oc", "sum"),
+
+                    "Salidas últimos 6 meses":
+                        ("_salidas_6_oc", "sum"),
+
+                    "Salidas histórico disponible":
+                        ("_salidas_15_oc", "sum"),
+
+                    "Artículo":
+                        ("_articulo_oc", "first"),
+
+                    "Bodegas":
+                        (
+                            "_bodega_oc",
+                            lambda valores: ", ".join(
+                                sorted(
+                                    set(
+                                        str(v).strip()
+                                        for v in valores
+                                        if str(v).strip()
+                                    )
+                                )
+                            )
+                        ),
+
+                    "Artículo crítico":
+                        ("_critico_oc", "max")
+                }
+            )
+        )
+
+
+        stock_por_referencia["Promedio salidas mensual"] = (
+            stock_por_referencia["Salidas últimos 6 meses"] / 6
+            if seis_meses_completos
+            else 0.0
+        )
+
+
+        # ========================================================
+        # 9. CRUZAR ÓRDENES CON EL INVENTARIO
+        # ========================================================
+
+        analisis = oc.merge(
+            stock_por_referencia,
+            on="_ref_oc",
+            how="left"
+        )
+
+        analisis = analisis.merge(
+            pendientes_por_referencia,
+            on="_ref_oc",
+            how="left"
+        )
+
+
+        analisis["Existe en inventario"] = (
+            analisis["Stock consolidado"].notna()
+        )
+
+
+        columnas_numericas = [
+            "Stock consolidado",
+            "Stock con antigüedad mayor a 3 meses",
+            "Salidas últimos 6 meses",
+            "Salidas histórico disponible",
+            "Promedio salidas mensual",
+            "Cantidad total pendiente referencia"
+        ]
+
+        for columna in columnas_numericas:
+
+            analisis[columna] = (
+                pd.to_numeric(
+                    analisis[columna],
+                    errors="coerce"
+                )
+                .fillna(0)
+            )
+
+
+        analisis["Artículo"] = (
+            analisis["Artículo"].fillna("")
+        )
+
+        analisis["Bodegas"] = (
+            analisis["Bodegas"].fillna("")
+        )
+
+        analisis["Artículo crítico"] = (
+            analisis["Artículo crítico"]
+            .fillna(False)
+            .astype(bool)
+        )
+
+
+        # ========================================================
+        # 10. CALCULAR COBERTURA Y ESTADO DE LA COMPRA
+        # ========================================================
+
+        def oc_evaluar_fila(fila):
+
+            stock = fila["Stock consolidado"]
+
+            promedio = fila["Promedio salidas mensual"]
+
+            cantidad_orden = fila["_cantidad_oc"]
+
+            pendientes = (
+                fila["Cantidad total pendiente referencia"]
+            )
+
+            salidas_6 = fila["Salidas últimos 6 meses"]
+
+            salidas_15 = fila["Salidas histórico disponible"]
+
+            critico = fila["Artículo crítico"]
+
+            existe = fila["Existe en inventario"]
+
+
+            resultado = {
+                "Stock proyectado": stock + pendientes,
+                "Cobertura actual (meses)": None,
+                "Cobertura proyectada (meses)": None,
+                "Porcentaje orden sobre stock": None,
+                "Estado análisis": "",
+                "Motivo de revisión": ""
+            }
+
+
+            if not existe:
+
+                resultado["Estado análisis"] = (
+                    "VALIDAR REFERENCIA"
                 )
 
-                st.markdown("### 2. Resultados de la validación")
-                m1, m2, m3 = st.columns(3)
-                m1.metric("Órdenes/referencias alertadas", f"{len(alertas_oc):,}")
-                m2.metric(
-                    "Referencias diferentes",
-                    f"{alertas_oc['Referencia'].nunique() if not alertas_oc.empty else 0:,}"
-                )
-                m3.metric(
-                    "Umbral de compra",
-                    "Más del 30% del stock"
+                resultado["Motivo de revisión"] = (
+                    "La referencia no aparece en el inventario."
                 )
 
-                if alertas_oc.empty:
-                    st.success(
-                        "No se encontraron órdenes que cumplan simultáneamente "
-                        "las dos condiciones: stock con antigüedad superior a 3 meses "
-                        "y cantidad ordenada mayor al 30% del stock histórico."
+                return pd.Series(resultado)
+
+
+            if not seis_meses_completos:
+
+                resultado["Estado análisis"] = (
+                    "VALIDAR HISTÓRICO"
+                )
+
+                resultado["Motivo de revisión"] = (
+                    "Faltan meses o los seis meses disponibles "
+                    "no son consecutivos."
+                )
+
+                return pd.Series(resultado)
+
+
+            if promedio <= 0 or salidas_6 <= 0:
+
+                if critico:
+
+                    resultado["Estado análisis"] = (
+                        "VALIDACIÓN MANUAL: ARTÍCULO CRÍTICO"
                     )
+
+                    resultado["Motivo de revisión"] = (
+                        "No registra salidas en los últimos seis "
+                        "meses. Validar necesidad y programación "
+                        "de la compra."
+                    )
+
+                elif salidas_15 <= 0:
+
+                    resultado["Estado análisis"] = (
+                        "VALIDAR COMPRA: SIN SALIDAS HISTÓRICAS"
+                    )
+
+                    resultado["Motivo de revisión"] = (
+                        "No registra salidas en el histórico "
+                        "disponible. Confirmar si la compra "
+                        "es necesaria."
+                    )
+
                 else:
-                    st.warning(
-                        "Se encontraron órdenes que cumplen las condiciones de alerta."
-                    )
-                    st.dataframe(
-                        alertas_oc,
-                        use_container_width=True,
-                        hide_index=True
-                    )
-                    st.download_button(
-                        "Descargar alertas de órdenes (Excel/CSV)",
-                        data=alertas_oc.to_csv(index=False, encoding="utf-8-sig"),
-                        file_name="alertas_ordenes_compra.csv",
-                        mime="text/csv"
+
+                    resultado["Estado análisis"] = (
+                        "VALIDAR: SIN SALIDAS RECIENTES"
                     )
 
-                # Correo automático una sola vez por archivo en la sesión.
-                # La configuración se toma de st.secrets["email"].
-                if not alertas_oc.empty and st.session_state.get(
-                    "firma_ordenes_correo_enviada"
-                ) != firma_ordenes:
-                    try:
-                        config_email = dict(st.secrets["email"])
-                        remitente = str(config_email.get("remitente", "")).strip()
-                        contrasena = str(config_email.get("contrasena", "")).strip()
-                        servidor = str(
-                            config_email.get("servidor", "smtp.office365.com")
-                        ).strip()
-                        puerto = int(config_email.get("puerto", 467))
+                    resultado["Motivo de revisión"] = (
+                        "No registra salidas en los últimos seis "
+                        "meses, aunque sí tiene consumo en el "
+                        "histórico anterior. Revisar consumo "
+                        "ocasional o programado."
+                    )
 
-                        destinatarios_config = (
-                            config_email.get("destinatarios")
-                            or config_email.get("destinatario")
-                            or config_email.get("correo_destino")
-                            or config_email.get("para")
-                            or ""
+                return pd.Series(resultado)
+
+
+            cobertura_actual = stock / promedio
+
+            cobertura_proyectada = (
+                stock + pendientes
+            ) / promedio
+
+            porcentaje_orden = (
+                cantidad_orden / stock * 100
+                if stock > 0
+                else None
+            )
+
+
+            resultado["Cobertura actual (meses)"] = (
+                cobertura_actual
+            )
+
+            resultado["Cobertura proyectada (meses)"] = (
+                cobertura_proyectada
+            )
+
+            resultado["Porcentaje orden sobre stock"] = (
+                porcentaje_orden
+            )
+
+
+            # Objetivo máximo de cobertura: 4 meses.
+            if cobertura_proyectada > 4:
+
+                # Stock medio/alto: ya existen al menos 2 meses
+                # de cobertura antes de la nueva compra.
+                if cobertura_actual >= 2:
+
+                    resultado["Estado análisis"] = (
+                        "REVISAR POSIBLE EXCESO"
+                    )
+
+                    resultado["Motivo de revisión"] = (
+                        "El stock actual cubre al menos dos meses "
+                        "y la compra proyectaría más de cuatro "
+                        "meses de cobertura."
+                    )
+
+                else:
+
+                    resultado["Estado análisis"] = (
+                        "REVISAR CANTIDAD SOLICITADA"
+                    )
+
+                    resultado["Motivo de revisión"] = (
+                        "La compra proyectaría más de cuatro "
+                        "meses de cobertura. Revisar la cantidad "
+                        "solicitada."
+                    )
+
+            else:
+
+                resultado["Estado análisis"] = (
+                    "SIN ALERTA POR COBERTURA"
+                )
+
+                resultado["Motivo de revisión"] = (
+                    "La cobertura proyectada no supera "
+                    "cuatro meses."
+                )
+
+
+            return pd.Series(resultado)
+
+
+        resultados_evaluacion = analisis.apply(
+            oc_evaluar_fila,
+            axis=1
+        )
+
+        analisis = pd.concat(
+            [
+                analisis.reset_index(drop=True),
+                resultados_evaluacion.reset_index(drop=True)
+            ],
+            axis=1
+        )
+
+
+        # ========================================================
+        # 11. CONSTRUIR LA TABLA DE RESULTADOS
+        # ========================================================
+
+        analisis_final = pd.DataFrame({
+            "Orden": analisis["_orden_oc"],
+            "Referencia": analisis["_ref_oc"],
+            "Artículo": analisis["Artículo"],
+            "Cantidad de esta orden": analisis["_cantidad_oc"],
+            "Cantidad total pendiente referencia":
+                analisis["Cantidad total pendiente referencia"],
+            "Stock consolidado": analisis["Stock consolidado"],
+            "Stock con antigüedad mayor a 3 meses":
+                analisis["Stock con antigüedad mayor a 3 meses"],
+            "Salidas últimos 6 meses":
+                analisis["Salidas últimos 6 meses"],
+            "Salidas histórico disponible":
+                analisis["Salidas histórico disponible"],
+            "Promedio salidas mensual":
+                analisis["Promedio salidas mensual"],
+            "Stock proyectado": analisis["Stock proyectado"],
+            "Cobertura actual (meses)":
+                analisis["Cobertura actual (meses)"],
+            "Cobertura proyectada (meses)":
+                analisis["Cobertura proyectada (meses)"],
+            "Porcentaje orden sobre stock":
+                analisis["Porcentaje orden sobre stock"],
+            "Artículo crítico": analisis["Artículo crítico"],
+            "Bodegas": analisis["Bodegas"],
+            "Estado análisis": analisis["Estado análisis"],
+            "Motivo de revisión": analisis["Motivo de revisión"]
+        })
+
+
+        if "Grupo" in analisis.columns:
+            analisis_final.insert(
+                1,
+                "Grupo",
+                analisis["Grupo"]
+            )
+
+        if "Req" in analisis.columns:
+            analisis_final.insert(
+                2,
+                "Req",
+                analisis["Req"]
+            )
+
+        if "Fecha" in analisis.columns:
+            analisis_final["Fecha"] = analisis["Fecha"]
+
+        analisis_final["Estado de la orden"] = (
+            analisis["_estado_oc"]
+        )
+
+
+        # Ordenar para mostrar primero los casos que requieren revisión.
+        prioridad_estados = {
+            "VALIDAR REFERENCIA": 1,
+            "VALIDAR HISTÓRICO": 2,
+            "VALIDACIÓN MANUAL: ARTÍCULO CRÍTICO": 3,
+            "VALIDAR COMPRA: SIN SALIDAS HISTÓRICAS": 4,
+            "VALIDAR: SIN SALIDAS RECIENTES": 5,
+            "REVISAR POSIBLE EXCESO": 6,
+            "REVISAR CANTIDAD SOLICITADA": 7,
+            "SIN ALERTA POR COBERTURA": 8
+        }
+
+        analisis_final["_prioridad"] = (
+            analisis_final["Estado análisis"]
+            .map(prioridad_estados)
+            .fillna(99)
+        )
+
+        analisis_final = (
+            analisis_final
+            .sort_values(
+                by=[
+                    "_prioridad",
+                    "Cobertura proyectada (meses)"
+                ],
+                ascending=[True, False],
+                na_position="last"
+            )
+            .drop(columns=["_prioridad"])
+            .reset_index(drop=True)
+        )
+
+
+        estados_sin_alerta = {
+            "SIN ALERTA POR COBERTURA"
+        }
+
+        alertas_oc = analisis_final[
+            ~analisis_final["Estado análisis"].isin(
+                estados_sin_alerta
+            )
+        ].copy()
+
+
+        # ========================================================
+        # 12. INDICADORES DE LA PÁGINA
+        # ========================================================
+
+        total_ordenes = analisis["_orden_oc"].nunique()
+
+        total_referencias = analisis["_ref_oc"].nunique()
+
+        total_alertas = len(alertas_oc)
+
+        total_exceso = (
+            analisis_final["Estado análisis"]
+            .eq("REVISAR POSIBLE EXCESO")
+            .sum()
+        )
+
+        total_cantidad = analisis["_cantidad_oc"].sum()
+
+
+        k1, k2, k3, k4 = st.columns(4)
+
+        k1.metric(
+            "Órdenes activas",
+            f"{total_ordenes:,}"
+        )
+
+        k2.metric(
+            "Referencias analizadas",
+            f"{total_referencias:,}"
+        )
+
+        k3.metric(
+            "Casos para revisión",
+            f"{total_alertas:,}"
+        )
+
+        k4.metric(
+            "Posible exceso",
+            f"{total_exceso:,}"
+        )
+
+
+        st.caption(
+            f"Cantidad total registrada en las órdenes activas: "
+            f"{total_cantidad:,.2f}"
+        )
+
+
+        # ========================================================
+        # 13. TABLA DE ALERTAS
+        # ========================================================
+
+        st.subheader("Referencias que requieren revisión")
+
+        if alertas_oc.empty:
+
+            st.success(
+                "No se identificaron alertas con las reglas "
+                "de cobertura configuradas."
+            )
+
+        else:
+
+            st.dataframe(
+                alertas_oc,
+                use_container_width=True,
+                hide_index=True
+            )
+
+
+        # ========================================================
+        # 14. ANÁLISIS COMPLETO
+        # ========================================================
+
+        with st.expander(
+            "Ver análisis completo de las órdenes",
+            expanded=False
+        ):
+
+            st.dataframe(
+                analisis_final,
+                use_container_width=True,
+                hide_index=True
+            )
+
+
+        # ========================================================
+        # 15. DESCARGAR EXCEL REAL CON DOS HOJAS
+        # ========================================================
+
+        st.subheader("Descargar resultados")
+
+        buffer_excel = io.BytesIO()
+
+        with pd.ExcelWriter(
+            buffer_excel,
+            engine="openpyxl"
+        ) as writer:
+
+            alertas_oc.to_excel(
+                writer,
+                index=False,
+                sheet_name="Alertas"
+            )
+
+            analisis_final.to_excel(
+                writer,
+                index=False,
+                sheet_name="Analisis completo"
+            )
+
+
+            # Ajustar ancho de columnas.
+            for nombre_hoja in [
+                "Alertas",
+                "Analisis completo"
+            ]:
+
+                hoja = writer.sheets[nombre_hoja]
+
+                hoja.freeze_panes = "A2"
+                hoja.auto_filter.ref = hoja.dimensions
+
+                for columna in hoja.columns:
+
+                    letra = columna[0].column_letter
+
+                    longitud_maxima = 0
+
+                    for celda in columna:
+
+                        valor = (
+                            ""
+                            if celda.value is None
+                            else str(celda.value)
                         )
-                        destinatarios = [
-                            x.strip()
-                            for x in re.split(r"[,;]", str(destinatarios_config))
-                            if x.strip()
+
+                        longitud_maxima = max(
+                            longitud_maxima,
+                            len(valor)
+                        )
+
+                    hoja.column_dimensions[letra].width = min(
+                        max(longitud_maxima + 2, 12),
+                        45
+                    )
+
+
+        buffer_excel.seek(0)
+
+        st.download_button(
+            label="Descargar análisis en Excel (.xlsx)",
+            data=buffer_excel.getvalue(),
+            file_name=(
+                "Analisis_Ordenes_Compra_"
+                + datetime.now().strftime("%Y%m%d_%H%M%S")
+                + ".xlsx"
+            ),
+            mime=(
+                "application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet"
+            ),
+            key="descargar_analisis_ordenes_excel"
+        )
+
+
+        # ========================================================
+        # 16. ENVÍO DE CORREO CON ALERTAS
+        # ========================================================
+
+        if not alertas_oc.empty:
+
+            st.subheader("Notificación por correo")
+
+            try:
+
+                configuracion_email = st.secrets["email"]
+
+                remitente = configuracion_email["remitente"]
+
+                contrasena = configuracion_email["contrasena"]
+
+                servidor = configuracion_email.get(
+                    "servidor",
+                    "smtp.office365.com"
+                )
+
+                puerto = int(
+                    configuracion_email.get("puerto", 587)
+                )
+
+                destinatarios_config = (
+                    configuracion_email.get("destinatarios", "")
+                )
+
+                if isinstance(destinatarios_config, str):
+
+                    destinatarios = [
+                        correo.strip()
+                        for correo in re.split(
+                            r"[,;]",
+                            destinatarios_config
+                        )
+                        if correo.strip()
+                    ]
+
+                else:
+
+                    destinatarios = list(
+                        destinatarios_config
+                    )
+
+
+                if not destinatarios:
+
+                    st.warning(
+                        "No hay destinatarios configurados en "
+                        "st.secrets['email']['destinatarios']."
+                    )
+
+                else:
+
+                    firma_archivo = hashlib.sha256(
+                        contenido_archivo
+                    ).hexdigest()
+
+                    firma_ya_enviada = st.session_state.get(
+                        "firma_ordenes_correo_enviada"
+                    )
+
+
+                    if firma_ya_enviada != firma_archivo:
+
+                        columnas_correo = [
+                            columna
+                            for columna in [
+                                "Orden",
+                                "Referencia",
+                                "Artículo",
+                                "Cantidad de esta orden",
+                                "Stock consolidado",
+                                "Cantidad total pendiente referencia",
+                                "Cobertura proyectada (meses)",
+                                "Estado análisis",
+                                "Motivo de revisión"
+                            ]
+                            if columna in alertas_oc.columns
                         ]
 
-                        if not remitente or not contrasena or not destinatarios:
-                            raise ValueError(
-                                "Falta configurar remitente, contraseña o destinatarios "
-                                "en st.secrets['email']."
-                            )
 
-                        cuerpo_html = alertas_oc.to_html(
-                            index=False, border=0, justify="left"
+                        tabla_correo = alertas_oc[
+                            columnas_correo
+                        ].copy()
+
+                        tabla_html = tabla_correo.to_html(
+                            index=False,
+                            border=1,
+                            justify="center",
+                            escape=True
                         )
+
+
+                        asunto = (
+                            "Alerta de revisión de órdenes de compra"
+                        )
+
+                        cuerpo_html = f"""
+                        <html>
+                        <body style="font-family: Arial, sans-serif;
+                                     color: #333333;">
+
+                            <div style="background-color: #064B9B;
+                                        padding: 12px;
+                                        color: white;
+                                        font-size: 20px;
+                                        font-weight: bold;">
+                                Revisión de órdenes de compra
+                            </div>
+
+                            <p>
+                                Se identificaron
+                                <b>{len(alertas_oc)}</b>
+                                registros que requieren revisión.
+                            </p>
+
+                            <p>
+                                El análisis utiliza los seis meses
+                                más recientes disponibles en el
+                                histórico y consolida el stock de
+                                todas las bodegas por referencia.
+                            </p>
+
+                            <p>
+                                La alerta es preventiva y no bloquea
+                                ni autoriza automáticamente la compra.
+                            </p>
+
+                            <div style="overflow-x: auto;">
+                                {tabla_html}
+                            </div>
+
+                            <p>
+                                <b>Archivo analizado:</b>
+                                {html.escape(archivo_ordenes.name)}
+                            </p>
+
+                            <p>
+                                Este correo fue generado
+                                automáticamente por la aplicación
+                                de inventarios.
+                            </p>
+
+                        </body>
+                        </html>
+                        """
+
+
                         mensaje = EmailMessage()
-                        mensaje["Subject"] = (
-                            f"Alerta de órdenes de compra: {len(alertas_oc)} "
-                            "referencias con inventario antiguo"
-                        )
+
+                        mensaje["Subject"] = asunto
                         mensaje["From"] = remitente
                         mensaje["To"] = ", ".join(destinatarios)
+
                         mensaje.set_content(
-                            "Se detectaron órdenes de compra que cumplen los criterios "
-                            "de antigüedad superior a 3 meses y cantidad mayor al 30% "
-                            "del stock histórico. Consulte la tabla en la versión HTML "
-                            "de este correo."
+                            "Se identificaron registros que "
+                            "requieren revisión en las órdenes "
+                            "de compra. Consulte el reporte "
+                            "generado en la aplicación."
                         )
+
                         mensaje.add_alternative(
-                            f"""
-                            <html><body style="font-family:Arial,sans-serif;color:#172D49">
-                            <div style="background:#102D50;color:#fff;padding:18px">
-                                <h2 style="margin:0;color:#fff">Alerta de órdenes de compra</h2>
-                                <p style="margin:6px 0 0">Inventarios ALDC</p>
-                            </div>
-                            <p>Se identificaron <b>{len(alertas_oc)}</b> combinaciones
-                            de orden y referencia para revisar.</p>
-                            <p><b>Regla:</b> la referencia tiene stock con antigüedad
-                            superior a 3 meses y la cantidad de la orden supera el 30%
-                            del stock total existente en el histórico.</p>
-                            <div style="overflow-x:auto">{cuerpo_html}</div>
-                            <p style="font-size:12px;color:#667892">
-                            Mensaje automático generado por Inventarios ALDC.
-                            </p></body></html>
-                            """,
+                            cuerpo_html,
                             subtype="html"
                         )
 
 
-                        import ssl
-                        
-                        etapa_correo = "conexión con Gmail"
-                        
-                        try:
+                        # Puerto 465: SSL desde la conexión.
+                        # Otros puertos configurados: conexión SMTP
+                        # con STARTTLS cuando corresponda.
+                        if puerto == 465:
+
+                            contexto_ssl = ssl.create_default_context()
+
                             with smtplib.SMTP_SSL(
                                 servidor,
                                 puerto,
-                                timeout=30,
-                                context=ssl.create_default_context()
+                                context=contexto_ssl,
+                                timeout=30
                             ) as smtp:
-                                etapa_correo = "autenticación de Gmail"
-                                smtp.login(remitente, contrasena)
-                        
-                                etapa_correo = "envío del mensaje"
+
+                                smtp.login(
+                                    remitente,
+                                    contrasena
+                                )
+
                                 smtp.send_message(mensaje)
-                        
-                            # Solo se marca como enviado si no hubo errores.
-                            st.session_state["firma_ordenes_correo_enviada"] = firma_ordenes
-                        
-                            st.success(
-                                "Correo de alerta enviado correctamente a: "
-                                + ", ".join(destinatarios)
-                            )
-                        
-                        except Exception as exc:
-                            st.error(
-                                f"Falló la etapa de {etapa_correo}. "
-                                f"Error: {type(exc).__name__}: {exc}"
-                            )
 
-                    except Exception as exc:
-                        st.error(
-                            "Las alertas se calcularon, pero no fue posible enviar "
-                            f"el correo automático. Detalle: {exc}"
+                        else:
+
+                            with smtplib.SMTP(
+                                servidor,
+                                puerto,
+                                timeout=30
+                            ) as smtp:
+
+                                smtp.ehlo()
+
+                                smtp.starttls(
+                                    context=ssl.create_default_context()
+                                )
+
+                                smtp.ehlo()
+
+                                smtp.login(
+                                    remitente,
+                                    contrasena
+                                )
+
+                                smtp.send_message(mensaje)
+
+
+                        st.session_state[
+                            "firma_ordenes_correo_enviada"
+                        ] = firma_archivo
+
+                        st.success(
+                            "Correo de alertas enviado correctamente."
                         )
-                        st.caption(
-                            "Configura los datos SMTP en los Secrets de Streamlit Cloud. "
-                            "Después de corregirlos, vuelve a cargar el archivo de órdenes."
+
+                    else:
+
+                        st.info(
+                            "Las alertas de este mismo archivo ya "
+                            "se enviaron durante esta sesión. "
+                            "No se repitió el envío."
                         )
-                elif not alertas_oc.empty:
-                    st.info(
-                        "El correo de este archivo ya se envió en esta sesión; "
-                        "no se volverá a enviar automáticamente en cada actualización."
-                    )
-
-        except Exception as exc:
-            st.error(f"No fue posible procesar el archivo de órdenes: {exc}")
 
 
+            except Exception as error:
+
+                st.error(
+                    "No fue posible enviar el correo. "
+                    f"Detalle: {error}"
+                )
+
+                st.caption(
+                    "La descarga del Excel sigue disponible, "
+                    "aunque falle el envío del correo."
+                )
 # ============================================================
 # PIE
 # ============================================================
