@@ -3672,26 +3672,27 @@ elif pagina == "Órdenes de compra":
 
         return texto.upper()
 
+
         def oc_identificar_mes(columna):
             """
             Reconoce columnas como:
             SALIDA JUNIO 2025
             SALIDA AGOSTO 2026
             """
-        
+
             texto = oc_normalizar(columna)
-        
+
             coincidencia = re.fullmatch(
                 r"salida([a-z]+)(20\d{2})",
                 texto
             )
-        
+
             if not coincidencia:
                 return None
-        
+
             nombre_mes = coincidencia.group(1)
             anio = int(coincidencia.group(2))
-        
+
             meses = {
                 "enero": 1,
                 "febrero": 2,
@@ -3707,12 +3708,12 @@ elif pagina == "Órdenes de compra":
                 "noviembre": 11,
                 "diciembre": 12
             }
-        
+
             mes = meses.get(nombre_mes)
-        
+
             if mes is None:
                 return None
-        
+
             return {
                 "columna": columna,
                 "anio": anio,
