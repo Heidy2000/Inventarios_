@@ -3964,22 +3964,16 @@ elif pagina == "Órdenes de compra":
     # ------------------------------------------------------------
     # Estados: configurables. Los desconocidos se tratan como ACTIVOS.
     # ------------------------------------------------------------
-
     estados_detectados = sorted(
-        oc_base["_estado_oc"].unique().tolist()
-    )
+    oc_base["_estado_oc"].unique().tolist()
+)
 
     estados_por_defecto = [
         "[4] - Cerrada",
         "[5] - Aprobada",
         "[8] - Anulada"
     ]
-
-    # with st.expander(
-    #     "Estados de las órdenes (configurable)",
-    #     expanded=False
-    # ):
-
+    
     estados_excluidos = st.multiselect(
         "Estados que NO se consideran pendientes de compra",
         options=estados_detectados,
@@ -3989,27 +3983,27 @@ elif pagina == "Órdenes de compra":
         ],
         key="oc_estados_excluidos"
     )
+    
     estados_activos = [
-            "[6] - EnTransito",
-            "[7] - EnTransito_EntradaParcial"
-        ]
-
-        st.caption(
-            "Se consideran activos: "
-            + (", ".join(estados_activos) or "ninguno")
-            + ". Cualquier estado que no excluyas aquí se analiza."
-        )
-
+        "[6] - EnTransito",
+        "[7] - EnTransito_EntradaParcial"
+    ]
+    
+    st.caption(
+        "Se consideran activos: "
+        + (", ".join(estados_activos) or "ninguno")
+        + ". Cualquier estado que no excluyas aquí se analiza."
+    )
+    
     oc = oc_base[
         ~oc_base["_estado_oc"].isin(estados_excluidos)
     ].copy()
-
+    
     oc = oc[
         (oc["_orden_oc"] != "")
         & (oc["_ref_oc"] != "")
         & (oc["_cantidad_oc"] > 0)
     ].copy()
-
     if oc.empty:
 
         st.warning(
