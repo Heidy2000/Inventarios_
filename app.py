@@ -3989,7 +3989,7 @@ elif pagina == "Órdenes de compra":
         ],
         key="oc_estados_excluidos"
     )
-        estados_activos = [
+    estados_activos = [
             "[6] - EnTransito",
             "[7] - EnTransito_EntradaParcial"
         ]
