@@ -1853,7 +1853,7 @@ with st.container(border=True):
     with col4:
 
         antiguedad_seleccionada = st.selectbox(
-            "Antigüedad",
+            "Rotación",
             ["Todas"] + antiguedades
         )
 
