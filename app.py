@@ -2763,20 +2763,20 @@ elif pagina == "Evolución":
     # LÍNEA DE UMBRAL DE STOCK ALTO
     # --------------------------------------------------------
 
-    fig_evolucion.add_shape(
-        type="line",
-        x0=0,
-        x1=1,
-        xref="paper",
-        y0=umbral_stock,
-        y1=umbral_stock,
-        yref="y2",
-        line=dict(
-            color=AZUL,
-            width=1.5,
-            dash="dash"
-        )
-    )
+    # fig_evolucion.add_shape(
+    #     type="line",
+    #     x0=0,
+    #     x1=1,
+    #     xref="paper",
+    #     y0=umbral_stock,
+    #     y1=umbral_stock,
+    #     yref="y2",
+    #     line=dict(
+    #         color=AZUL,
+    #         width=1.5,
+    #         dash="dash"
+    #     )
+    # )
 
     # --------------------------------------------------------
     # CONFIGURACIÓN
