@@ -2786,9 +2786,6 @@ elif pagina == "Evolución":
         height=610,
         barmode="relative",
 
-        title=(
-            "Entradas y salidas mensuales vs. stock de cierre"
-        ),
 
         xaxis=dict(
             title="Periodo",
