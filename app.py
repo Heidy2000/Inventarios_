@@ -3975,10 +3975,10 @@ elif pagina == "Órdenes de compra":
         "[8] - Anulada"
     ]
 
-    with st.expander(
-        "Estados de las órdenes (configurable)",
-        expanded=False
-    ):
+    # with st.expander(
+    #     "Estados de las órdenes (configurable)",
+    #     expanded=False
+    # ):
 
 
     
