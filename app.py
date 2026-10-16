@@ -2703,47 +2703,47 @@ elif pagina == "Evolución":
     # ENTRADA ALTA + STOCK ALTO
     # --------------------------------------------------------
 
-    df_marcados = df_mensual[
-        (df_mensual["Entradas"] >= umbral_entrada)
-        & (df_mensual["Stock de cierre"] >= umbral_stock)
-    ].copy()
+    # df_marcados = df_mensual[
+    #     (df_mensual["Entradas"] >= umbral_entrada)
+    #     & (df_mensual["Stock de cierre"] >= umbral_stock)
+    # ].copy()
 
-    if len(df_marcados) > 0:
+    # if len(df_marcados) > 0:
 
-        fig_evolucion.add_trace(
-            go.Scatter(
-                x=df_marcados["Mes"],
-                y=df_marcados["Stock de cierre"],
-                name="Entrada alta + stock alto",
-                mode="markers",
-                yaxis="y2",
-                marker=dict(
-                    size=17,
-                    symbol="diamond",
-                    color=AZUL,
-                    line=dict(
-                        width=2,
-                        color="white"
-                    )
-                ),
-                customdata=df_marcados[
-                    [
-                        "Entradas",
-                        "Salidas",
-                        "Neto"
-                    ]
-                ],
-                hovertemplate=(
-                    "<b>%{x}</b><br>"
-                    "⚠️ <b>Entrada alta + stock alto</b><br>"
-                    "📦 Stock: %{y:,.2f}<br>"
-                    "📥 Entradas: %{customdata[0]:,.2f}<br>"
-                    "📤 Salidas: %{customdata[1]:,.2f}<br>"
-                    "📊 Neto: %{customdata[2]:,.2f}"
-                    "<extra></extra>"
-                )
-            )
-        )
+    #     fig_evolucion.add_trace(
+    #         go.Scatter(
+    #             x=df_marcados["Mes"],
+    #             y=df_marcados["Stock de cierre"],
+    #             name="Entrada alta + stock alto",
+    #             mode="markers",
+    #             yaxis="y2",
+    #             marker=dict(
+    #                 size=17,
+    #                 symbol="diamond",
+    #                 color=AZUL,
+    #                 line=dict(
+    #                     width=2,
+    #                     color="white"
+    #                 )
+    #             ),
+    #             customdata=df_marcados[
+    #                 [
+    #                     "Entradas",
+    #                     "Salidas",
+    #                     "Neto"
+    #                 ]
+    #             ],
+    #             hovertemplate=(
+    #                 "<b>%{x}</b><br>"
+    #                 "⚠️ <b>Entrada alta + stock alto</b><br>"
+    #                 "📦 Stock: %{y:,.2f}<br>"
+    #                 "📥 Entradas: %{customdata[0]:,.2f}<br>"
+    #                 "📤 Salidas: %{customdata[1]:,.2f}<br>"
+    #                 "📊 Neto: %{customdata[2]:,.2f}"
+    #                 "<extra></extra>"
+    #             )
+    #         )
+    #     )
 
     # --------------------------------------------------------
     # ZONA DE STOCK ALTO
