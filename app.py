@@ -2749,15 +2749,15 @@ elif pagina == "Evolución":
     # ZONA DE STOCK ALTO
     # --------------------------------------------------------
 
-    fig_evolucion.add_hrect(
-        y0=umbral_stock,
-        y1=stock_max * 1.05,
-        yref="y2",
-        fillcolor=AZUL,
-        opacity=0.08,
-        line_width=0,
-        layer="below"
-    )
+    # fig_evolucion.add_hrect(
+    #     y0=umbral_stock,
+    #     y1=stock_max * 1.05,
+    #     yref="y2",
+    #     fillcolor=AZUL,
+    #     opacity=0.08,
+    #     line_width=0,
+    #     layer="below"
+    # )
 
     # --------------------------------------------------------
     # LÍNEA DE UMBRAL DE STOCK ALTO
