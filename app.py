@@ -4568,7 +4568,6 @@ elif pagina == "Órdenes de compra":
         )
 
     prioridad_estados = {
-        "VALIDAR REFERENCIA": 1,
         "VALIDAR HISTÓRICO": 2,
         "VALIDACIÓN MANUAL: ARTÍCULO CRÍTICO": 3,
         "VALIDAR COMPRA: SIN SALIDAS HISTÓRICAS": 4,
