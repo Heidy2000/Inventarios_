@@ -3970,8 +3970,9 @@ elif pagina == "Órdenes de compra":
     )
 
     estados_por_defecto = [
-        e for e in estados_detectados
-        if oc_estado_no_activo(e)
+        "[4] - Cerrada",
+        "[5] - Aprobada",
+        "[8] - Anulada"
     ]
 
     with st.expander(
@@ -3979,13 +3980,17 @@ elif pagina == "Órdenes de compra":
         expanded=False
     ):
 
-        estados_excluidos = st.multiselect(
-            "Estados que NO se consideran pendientes de compra",
-            options=estados_detectados,
-            default=estados_por_defecto,
-            key="oc_estados_excluidos"
-        )
 
+    
+    estados_excluidos = st.multiselect(
+        "Estados que NO se consideran pendientes de compra",
+        options=estados_detectados,
+        default=[
+            estado for estado in estados_por_defecto
+            if estado in estados_detectados
+        ],
+        key="oc_estados_excluidos"
+    )
         estados_activos = [
             e for e in estados_detectados
             if e not in estados_excluidos
