@@ -4410,13 +4410,7 @@ elif pagina == "Órdenes de compra":
         }
 
         # Caso E: datos insuficientes
-        if not existe:
 
-            resultado["Estado análisis"] = "VALIDAR REFERENCIA"
-            resultado["Motivo de revisión"] = (
-                "La referencia no aparece en el inventario."
-            )
-            return pd.Series(resultado)
 
         if not seis_meses_validos:
 
