@@ -2595,9 +2595,7 @@ elif pagina == "Evolución":
 
     st.caption(
         "La línea representa el stock de cierre de cada mes. "
-        "La franja azul identifica niveles altos de inventario. "
-        "Los marcadores destacados muestran meses donde coincidieron "
-        "entradas altas y stock elevado."
+
     )
 
     fig_evolucion = go.Figure()
