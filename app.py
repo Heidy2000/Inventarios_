@@ -3971,7 +3971,10 @@ elif pagina == "Órdenes de compra":
     estados_por_defecto = [
         "[4] - Cerrada",
         "[5] - Aprobada",
-        "[8] - Anulada"
+        "[8] - Anulada",
+        "[1] - Creada",
+        "[6] - EnTransito",
+        "[7] - EnTransito_EntradaParcial"
     ]
     
     estados_excluidos = st.multiselect(
