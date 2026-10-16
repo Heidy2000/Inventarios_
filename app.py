@@ -3980,8 +3980,6 @@ elif pagina == "Órdenes de compra":
     #     expanded=False
     # ):
 
-
-    
     estados_excluidos = st.multiselect(
         "Estados que NO se consideran pendientes de compra",
         options=estados_detectados,
@@ -3992,8 +3990,8 @@ elif pagina == "Órdenes de compra":
         key="oc_estados_excluidos"
     )
         estados_activos = [
-            e for e in estados_detectados
-            if e not in estados_excluidos
+            "[6] - EnTransito",
+            "[7] - EnTransito_EntradaParcial"
         ]
 
         st.caption(
