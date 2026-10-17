@@ -13,7 +13,14 @@ from motor_lifo import (
     col_exacta,
     kpis_corte,
     pagina_actualizar_kardex,
+    a_numero,
+    numero_bodega,
+    BODEGAS_EXCLUIDAS,
+    DIAS_VENTANA_COMPLETA,
 )
+import acceso
+import conciliacion
+import ui
 
 # ============================================================
 # CONFIGURACIÓN GENERAL
@@ -29,46 +36,43 @@ st.set_page_config(
 EPS = 1e-7
 
 # ============================================================
-# PALETA INSTITUCIONAL — REFERENCIA ÁREA LIMPIA
+# PALETA INSTITUCIONAL — ÁREA LIMPIA (definida en ui.py)
+# Azul principal, azul oscuro y naranja de acento.
 # ============================================================
 
-AZUL = "#254B60"
-AZUL_OSCURO = "#193747"
-AZUL_MEDIO = "#37647B"
-AZUL_CLARO = "#A9C4D0"
-AZUL_SUAVE = "#EDF3F6"
+AZUL = ui.AZUL
+AZUL_OSCURO = ui.AZUL_OSCURO
+AZUL_MEDIO = ui.AZUL_MEDIO
+AZUL_CLARO = ui.AZUL_CLARO
+AZUL_SUAVE = ui.AZUL_SUAVE
 
-VERDE = "#87D33F"
-VERDE_CLARO = "#B6E879"
-VERDE_SUAVE = "#EDF9E4"
+VERDE = ui.VERDE
+VERDE_CLARO = ui.VERDE_CLARO
+VERDE_SUAVE = ui.VERDE_SUAVE
 
-NARANJA = "#F58220"
-NARANJA_CLARO = "#F9B56E"
-NARANJA_SUAVE = "#FFF1E3"
+NARANJA = ui.NARANJA
+NARANJA_CLARO = ui.NARANJA_CLARO
+NARANJA_SUAVE = ui.NARANJA_SUAVE
 
-ROJO = "#E66B6B"
-ROJO_CLARO = "#F39A9A"
-ROJO_SUAVE = "#FDEEEE"
+ROJO = ui.ROJO
+ROJO_CLARO = ui.ROJO_CLARO
+ROJO_SUAVE = ui.ROJO_SUAVE
 
-MORADO = "#7A70D8"
-MORADO_SUAVE = "#F1EFFF"
+MORADO = ui.MORADO
+MORADO_SUAVE = ui.MORADO_SUAVE
 
-AMARILLO = "#F2B84B"
-AMARILLO_SUAVE = "#FFF7E4"
+AMARILLO = ui.AMARILLO
+AMARILLO_SUAVE = ui.AMARILLO_SUAVE
 
-GRIS_FONDO = "#F4F6FA"
-GRIS_PANEL = "#FFFFFF"
-GRIS_BORDE = "#DFE6EF"
-GRIS_GRID = "#E9EEF5"
-GRIS_TEXTO = "#667892"
-GRIS_OSCURO = "#172D49"
-BLANCO = "#FFFFFF"
+GRIS_FONDO = ui.GRIS_FONDO
+GRIS_PANEL = ui.GRIS_PANEL
+GRIS_BORDE = ui.GRIS_BORDE
+GRIS_GRID = ui.GRIS_GRID
+GRIS_TEXTO = ui.GRIS_TEXTO
+GRIS_OSCURO = ui.GRIS_OSCURO
+BLANCO = ui.BLANCO
 
-px.defaults.color_discrete_sequence = [
-    AZUL, NARANJA, VERDE, MORADO, AMARILLO, AZUL_CLARO, ROJO,
-    "#4D6F91", "#9AA9BA", AZUL_OSCURO, "#2FA4A9",
-    NARANJA_CLARO, VERDE_CLARO, "#B7A8FF"
-]
+px.defaults.color_discrete_sequence = ui.SECUENCIA_GRAFICOS
 
 
 # ============================================================
@@ -98,560 +102,19 @@ TIEMPO_SESION_MINUTOS = 30
 
 
 # ============================================================
-# CSS — INTERFAZ BASADA EN EL DASHBOARD DE REFERENCIA
+# ESTILOS DE LA APLICACIÓN (ver ui.py)
 # ============================================================
 
-st.markdown(
-    f"""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
-
-    :root {{
-        --azul: {AZUL};
-        --azul-oscuro: {AZUL_OSCURO};
-        --azul-medio: {AZUL_MEDIO};
-        --verde: {VERDE};
-        --fondo: {GRIS_FONDO};
-        --borde: {GRIS_BORDE};
-        --texto: {GRIS_OSCURO};
-        --texto-suave: {GRIS_TEXTO};
-    }}
-
-    html, body, [class*="css"] {{
-        font-family: "Inter", "Segoe UI", Arial, sans-serif !important;
-    }}
-
-    .stApp,
-    [data-testid="stAppViewContainer"] {{
-        background: {GRIS_FONDO} !important;
-    }}
-
-    [data-testid="stHeader"] {{
-        background: transparent !important;
-    }}
-
-    .block-container {{
-        padding-top: 1.75rem !important;
-        padding-bottom: 2rem !important;
-        max-width: 1510px !important;
-    }}
-
-    h1 {{
-        color: {AZUL_OSCURO} !important;
-        font-size: 2rem !important;
-        font-weight: 800 !important;
-        letter-spacing: -0.8px !important;
-        line-height: 1.15 !important;
-        margin-bottom: 0.15rem !important;
-    }}
-
-    h2 {{
-        color: {AZUL_OSCURO} !important;
-        font-size: 1.3rem !important;
-        font-weight: 700 !important;
-    }}
-
-    h3 {{
-        color: {AZUL_OSCURO} !important;
-        font-weight: 700 !important;
-    }}
-
-    p, label, .stCaption {{
-        color: {GRIS_TEXTO};
-    }}
-
-    /* =========================================================
-       SIDEBAR
-       ========================================================= */
-    section[data-testid="stSidebar"] {{
-        background: {AZUL_OSCURO} !important;
-        border-right: 0 !important;
-        min-width: 255px !important;
-        max-width: 255px !important;
-    }}
-
-    section[data-testid="stSidebar"] > div {{
-        background: {AZUL_OSCURO} !important;
-        padding: 1.35rem 1rem 1rem 1rem !important;
-    }}
-
-    section[data-testid="stSidebar"] * {{
-        color: #FFFFFF;
-    }}
-
-    .sidebar-brand {{
-        display: flex;
-        align-items: center;
-        gap: 11px;
-        padding: 0.15rem 0.15rem 1.25rem 0.15rem;
-        border-bottom: 1px solid rgba(255,255,255,0.14);
-        margin-bottom: 1.05rem;
-    }}
-
-    .brand-mark {{
-        width: 45px;
-        height: 45px;
-        min-width: 45px;
-        border-radius: 12px;
-        background: {AZUL};
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: #FFFFFF !important;
-        font-size: 18px;
-        font-weight: 800;
-    }}
-
-    .brand-title {{
-        font-size: 1.02rem;
-        line-height: 1.15;
-        font-weight: 800;
-        color: #FFFFFF !important;
-    }}
-
-    .brand-subtitle {{
-        font-size: 0.72rem;
-        margin-top: 4px;
-        color: #B9C8DA !important;
-    }}
-
-    .sidebar-section-title {{
-        color: #AFC1D7 !important;
-        font-size: 0.72rem;
-        font-weight: 800;
-        letter-spacing: 0.55px;
-        margin: 1rem 0 0.45rem 0.15rem;
-    }}
-
-    .sidebar-menu-item {{
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        padding: 0.72rem 0.8rem;
-        border-radius: 12px;
-        margin-bottom: 0.35rem;
-        color: #FFFFFF !important;
-        font-weight: 650;
-        font-size: 0.92rem;
-    }}
-
-    .sidebar-menu-item.active {{
-        background: {AZUL_MEDIO};
-        border-left: 3px solid {VERDE};
-        padding-left: calc(0.8rem - 3px);
-        box-shadow: inset 0 0 0 1px rgba(255,255,255,0.025);
-    }}
-
-    .sidebar-menu-icon {{
-        width: 27px;
-        height: 27px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 7px;
-        background: rgba(255,255,255,0.10);
-        font-size: 14px;
-    }}
-
-    .sidebar-user {{
-        background: rgba(255,255,255,0.055);
-        border: 1px solid rgba(255,255,255,0.09);
-        border-radius: 12px;
-        padding: 0.72rem 0.75rem;
-        margin-top: 0.75rem;
-        margin-bottom: 0.9rem;
-    }}
-
-    .sidebar-user-name {{
-        color: #FFFFFF !important;
-        font-weight: 700;
-        font-size: 0.86rem;
-    }}
-
-    .sidebar-user-status {{
-        color: #A9D977 !important;
-        font-size: 0.72rem;
-        margin-top: 3px;
-    }}
-
-    section[data-testid="stSidebar"] .stButton > button {{
-        background: transparent !important;
-        color: #DCE7F2 !important;
-        border: 1px solid rgba(255,255,255,0.14) !important;
-        border-radius: 10px !important;
-        font-weight: 600 !important;
-        box-shadow: none !important;
-        min-height: 40px !important;
-    }}
-
-    section[data-testid="stSidebar"] .stButton > button:hover {{
-        background: rgba(255,255,255,0.06) !important;
-        border-color: rgba(255,255,255,0.25) !important;
-        transform: none !important;
-    }}
-
-    /* =========================================================
-       ENCABEZADO — TÍTULO + PILLS
-       ========================================================= */
-    .dashboard-header {{
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 18px;
-        margin-bottom: 0.85rem;
-    }}
-
-    .dashboard-subtitle {{
-        color: #657893;
-        font-size: 0.98rem;
-        margin-top: 0.35rem;
-        line-height: 1.45;
-    }}
-
-    .header-pills {{
-        display: flex;
-        gap: 9px;
-        flex-wrap: wrap;
-        justify-content: flex-end;
-        padding-top: 0.25rem;
-    }}
-
-    .header-pill {{
-        padding: 0.55rem 0.9rem;
-        border-radius: 999px;
-        background: #FFFFFF;
-        border: 1px solid {GRIS_BORDE};
-        color: {AZUL_OSCURO} !important;
-        font-size: 0.78rem;
-        font-weight: 650;
-        white-space: nowrap;
-    }}
-
-    .header-pill.primary {{
-        background: #EEF4FF;
-        border-color: #B9D1F8;
-        color: {AZUL} !important;
-    }}
-
-    .header-pill.success {{
-        background: #F2FAEC;
-        border-color: #C8E6A8;
-        color: #31A85A !important;
-    }}
-
-    /* =========================================================
-       TARJETA DE FILTROS
-       ========================================================= */
-    .filter-card {{
-        background: #FFFFFF;
-        border: 1px solid {GRIS_BORDE};
-        border-radius: 22px;
-        padding: 1.35rem 1.45rem 1.05rem 1.45rem;
-        box-shadow: 0 4px 15px rgba(0,59,122,0.045);
-        margin: 0.9rem 0 0.95rem 0;
-    }}
-
-    .filter-title {{
-        color: {AZUL_OSCURO};
-        font-size: 0.9rem;
-        font-weight: 800;
-        letter-spacing: 0.35px;
-        text-transform: uppercase;
-        margin-bottom: 0.12rem;
-    }}
-
-    .filter-subtitle {{
-        color: #7A8AA0;
-        font-size: 0.78rem;
-        margin-bottom: 0.95rem;
-    }}
-
-    .filter-records {{
-        display: inline-flex;
-        align-items: center;
-        padding: 0.38rem 0.72rem;
-        border-radius: 999px;
-        background: #F1F5FA;
-        color: #61738C !important;
-        font-size: 0.72rem;
-        font-weight: 650;
-        margin-top: 0.75rem;
-    }}
-
-    div[data-baseweb="select"] > div {{
-        border-radius: 10px !important;
-        border: 1px solid #DDE5EF !important;
-        background: #EDF2F8 !important;
-        min-height: 43px !important;
-        box-shadow: none !important;
-    }}
-
-    div[data-baseweb="select"] > div:hover,
-    div[data-baseweb="select"] > div:focus-within {{
-        border-color: {AZUL} !important;
-        box-shadow: 0 0 0 2px rgba(6,75,155,0.08) !important;
-    }}
-
-    div[data-baseweb="select"] span {{
-        color: #243B59 !important;
-    }}
-
-    div[data-baseweb="select"] svg {{
-        fill: {AZUL_OSCURO} !important;
-    }}
-
-    div[data-testid="stSelectbox"] label {{
-        color: #62758F !important;
-        font-size: 0.75rem !important;
-        font-weight: 600 !important;
-        margin-bottom: 0.28rem !important;
-    }}
-
-    /* =========================================================
-       NAVEGACIÓN LATERAL — RECTÁNGULOS SIN PUNTOS
-       ========================================================= */
-    section[data-testid="stSidebar"] div[data-testid="stRadio"] {{
-        margin: 0 !important;
-    }}
-
-    section[data-testid="stSidebar"] div[data-testid="stRadio"] > label:first-child {{
-        display: none !important;
-    }}
-
-    section[data-testid="stSidebar"] div[data-testid="stRadio"] div[role="radiogroup"] {{
-        display: flex !important;
-        flex-direction: column !important;
-        gap: 7px !important;
-        width: 100% !important;
-    }}
-
-    section[data-testid="stSidebar"] div[data-testid="stRadio"] div[role="radiogroup"] > label {{
-        display: flex !important;
-        align-items: center !important;
-        justify-content: flex-start !important;
-        width: 100% !important;
-        min-height: 44px !important;
-        box-sizing: border-box !important;
-        margin: 0 !important;
-        padding: 0.62rem 0.8rem !important;
-        border-radius: 10px !important;
-        border: 1px solid rgba(255,255,255,0.12) !important;
-        background: rgba(255,255,255,0.055) !important;
-        cursor: pointer !important;
-        transition: 0.16s ease !important;
-    }}
-
-    section[data-testid="stSidebar"] div[data-testid="stRadio"] div[role="radiogroup"] > label:hover {{
-        background: rgba(255,255,255,0.10) !important;
-        border-color: rgba(255,255,255,0.22) !important;
-    }}
-
-    section[data-testid="stSidebar"] div[data-testid="stRadio"] div[role="radiogroup"] > label:has(input:checked) {{
-        background: {AZUL_MEDIO} !important;
-        border-color: rgba(135,211,63,0.55) !important;
-        box-shadow: inset 3px 0 0 {VERDE}, 0 2px 7px rgba(0,0,0,0.10) !important;
-    }}
-
-    section[data-testid="stSidebar"] div[data-testid="stRadio"] div[role="radiogroup"] > label p {{
-        color: #DCE7F2 !important;
-        font-size: 0.84rem !important;
-        font-weight: 600 !important;
-        margin: 0 !important;
-    }}
-
-    section[data-testid="stSidebar"] div[data-testid="stRadio"] div[role="radiogroup"] > label:has(input:checked) p {{
-        color: #FFFFFF !important;
-        font-weight: 750 !important;
-    }}
-
-    section[data-testid="stSidebar"] div[data-testid="stRadio"] input {{
-        display: none !important;
-    }}
-
-    .sidebar-session-title {{
-        margin-top: 1.15rem !important;
-    }}
-
-    /* =========================================================
-       FILTROS — CONTENEDOR BLANCO REAL DE STREAMLIT
-       ========================================================= */
-    div[data-testid="stVerticalBlockBorderWrapper"] {{
-        background: #FFFFFF !important;
-        border: 1px solid {GRIS_BORDE} !important;
-        border-radius: 18px !important;
-        box-shadow: 0 4px 15px rgba(0,59,122,0.045) !important;
-        padding: 0.15rem !important;
-    }}
-
-    /* =========================================================
-       KPI / CARDS
-       ========================================================= */
-    div[data-testid="metric-container"] {{
-        background: #FFFFFF;
-        border: 1px solid {GRIS_BORDE};
-        border-radius: 17px;
-        padding: 17px 18px 16px 18px;
-        box-shadow: 0 4px 14px rgba(0,59,122,0.045);
-        min-height: 112px;
-    }}
-
-    div[data-testid="stMetricLabel"] {{
-        color: #60748E !important;
-        font-size: 0.82rem !important;
-        font-weight: 650 !important;
-    }}
-
-    div[data-testid="stMetricValue"] {{
-        color: {AZUL_OSCURO} !important;
-        font-size: 1.75rem !important;
-        font-weight: 800 !important;
-        letter-spacing: -0.55px;
-    }}
-
-    div[data-testid="stMetricDelta"] {{
-        color: #39A85A !important;
-        font-weight: 650 !important;
-    }}
-
-    div[data-testid="stVerticalBlockBorderWrapper"] {{
-        border-radius: 17px !important;
-        border-color: {GRIS_BORDE} !important;
-        background: #FFFFFF !important;
-        box-shadow: 0 4px 14px rgba(0,59,122,0.04);
-    }}
-
-    div[data-testid="stDataFrame"] {{
-        border-radius: 13px;
-        overflow: hidden;
-        border: 1px solid {GRIS_BORDE};
-        background: #FFFFFF;
-    }}
-
-    .stButton > button {{
-        border-radius: 10px !important;
-        border: 1px solid {AZUL} !important;
-        background: {AZUL} !important;
-        color: #FFFFFF !important;
-        font-weight: 700 !important;
-        min-height: 41px !important;
-        box-shadow: 0 4px 10px rgba(6,75,155,0.12);
-    }}
-
-    .stButton > button:hover {{
-        background: {AZUL_OSCURO} !important;
-        border-color: {AZUL_OSCURO} !important;
-        transform: translateY(-1px);
-    }}
-
-    .stDownloadButton > button {{
-        border-radius: 10px !important;
-        border: 1px solid {AZUL} !important;
-        background: #FFFFFF !important;
-        color: {AZUL} !important;
-        font-weight: 700 !important;
-    }}
-
-    div[data-testid="stAlert"] {{
-        border-radius: 12px !important;
-    }}
-
-    hr {{
-        border-color: {GRIS_BORDE} !important;
-    }}
-
-    /* =========================================================
-       AJUSTES DE MARCA Y CONSISTENCIA
-       ========================================================= */
-    .brand-mark {{
-        background: {NARANJA} !important;
-    }}
-
-    .sidebar-menu-item.active {{
-        border-left: 3px solid {NARANJA} !important;
-    }}
-
-    section[data-testid="stSidebar"] div[data-testid="stRadio"] div[role="radiogroup"] > label:has(input:checked) {{
-        border-color: rgba(245,130,32,0.55) !important;
-        box-shadow: inset 3px 0 0 {NARANJA}, 0 2px 7px rgba(0,0,0,0.10) !important;
-    }}
-
-    .header-pill.accent {{
-        background: {NARANJA_SUAVE};
-        border-color: {NARANJA_CLARO};
-        color: #B85A00 !important;
-    }}
-
-    div[data-testid="metric-container"],
-    div[data-testid="stMetric"] {{
-        border-top: 3px solid {AZUL} !important;
-        transition: box-shadow 0.18s ease, transform 0.18s ease;
-    }}
-
-    div[data-testid="metric-container"]:hover,
-    div[data-testid="stMetric"]:hover {{
-        box-shadow: 0 8px 22px rgba(0,59,122,0.10);
-        transform: translateY(-1px);
-    }}
-
-    /* Métricas dentro de una tarjeta: sin "tarjeta dentro de tarjeta" */
-    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="metric-container"],
-    div[data-testid="stVerticalBlockBorderWrapper"] div[data-testid="stMetric"] {{
-        border: 0 !important;
-        box-shadow: none !important;
-        padding: 0 !important;
-        min-height: 0 !important;
-        transform: none !important;
-    }}
-
-    h3 {{
-        font-size: 1.12rem !important;
-    }}
-
-    .stDownloadButton > button:hover {{
-        background: {AZUL_SUAVE} !important;
-        border-color: {AZUL_OSCURO} !important;
-        color: {AZUL_OSCURO} !important;
-    }}
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+ui.aplicar_estilos(st)
 
 
 # ============================================================
 # FUNCIONES DE FORMATO
 # ============================================================
 
-def formato_moneda(valor):
-    if pd.isna(valor):
-        return "$0"
-
-    return (
-        f"${valor:,.0f}"
-        .replace(",", ".")
-    )
-
-
-def formato_numero(valor):
-    if pd.isna(valor):
-        return "0"
-
-    return (
-        f"{valor:,.2f}"
-        .replace(",", "X")
-        .replace(".", ",")
-        .replace("X", ".")
-    )
-
-
-def formato_entero(valor):
-    if pd.isna(valor):
-        return "0"
-
-    return (
-        f"{valor:,.0f}"
-        .replace(",", ".")
-    )
+formato_moneda = ui.formato_moneda
+formato_numero = ui.formato_numero
+formato_entero = ui.formato_entero
 
 
 def suma_columna(dataframe, columna):
@@ -813,7 +276,7 @@ def login():
         }
 
         .login-title {
-            color: #193747 !important;
+            color: #003B7A !important;
             font-size: 1.65rem;
             font-weight: 800;
             letter-spacing: -0.5px;
@@ -845,7 +308,7 @@ def login():
         }
 
         div[data-testid="stForm"] label p {
-            color: #193747 !important;
+            color: #003B7A !important;
             font-weight: 650 !important;
             font-size: 0.82rem !important;
         }
@@ -869,7 +332,7 @@ def login():
         }
 
         div[data-baseweb="input"] input {
-            color: #193747 !important;
+            color: #003B7A !important;
             font-size: 0.95rem !important;
             background: transparent !important;
         }
@@ -930,7 +393,7 @@ def login():
         }
 
         .login-footer strong {
-            color: #193747 !important;
+            color: #003B7A !important;
         }
 
         /* =====================================================
@@ -1064,7 +527,7 @@ def login():
                 """
                 <div class="login-footer">
                     <strong>Área Limpia D.C. S.A.S. E.S.P.</strong><br>
-                    🔒 Acceso protegido · Sistema de gestión y análisis de inventarios
+                    Acceso protegido · Sistema de gestión y análisis de inventarios
                 </div>
                 """,
                 unsafe_allow_html=True
@@ -1138,6 +601,18 @@ if not st.session_state["autenticado"]:
 
 
 # ============================================================
+# USUARIO Y PERMISOS (ver acceso.py)
+# El rol se resuelve en cada ejecución a partir de la sesión
+# autenticada; las páginas restringidas lo vuelven a comprobar.
+# ============================================================
+
+SECRETOS = acceso.secretos_de(st)
+USUARIO = acceso.usuario_sesion(st)
+ES_ADMIN = acceso.es_admin(USUARIO, SECRETOS)
+PAGINAS_PERMITIDAS = acceso.paginas_permitidas(USUARIO, SECRETOS)
+
+
+# ============================================================
 # CARGA DE DATOS
 #
 #   HISTORICO_INVENTARIOS.xlsx            -> base (mayo 2026)
@@ -1155,10 +630,6 @@ ARCHIVO_HISTORICO = os.path.join(
     "HISTORICO_INVENTARIOS.xlsx"
 )
 
-df_historico_oc =  os.path.join(
-    BASE_DIR,
-    "HISTORICO_INVENTARIOS.xlsx"
-)
 ARCHIVO_ACTUALIZADO = os.path.join(
     BASE_DIR,
     "INVENTARIO_ACTUALIZADO_LIFO.xlsx"
@@ -1194,26 +665,31 @@ else:
     except Exception as e:
 
         st.error(
-            f"No fue posible cargar el archivo Excel.\n\n"
-            f"Archivo esperado:\n{ARCHIVO_HISTORICO}\n\n"
-            f"Error: {e}"
+            "No fue posible cargar los datos del inventario "
+            f"({os.path.basename(ARCHIVO_ACTUALIZADO)} o "
+            f"{os.path.basename(ARCHIVO_HISTORICO)}).\n\n"
+            f"Detalle: {e}"
         )
 
         st.stop()
 
     if df is None:
 
-        st.warning(
-            "No hay un histórico base en el servidor. "
-            "Cárgalo junto con el Kardex para comenzar."
-        )
+        if ES_ADMIN:
 
-        pagina_actualizar_kardex(
-            st,
-            st.session_state.get("usuario", ""),
-            ARCHIVO_ACTUALIZADO,
-            ARCHIVO_HISTORICO
-        )
+            pagina_actualizar_kardex(
+                st,
+                USUARIO,
+                ARCHIVO_ACTUALIZADO,
+                ARCHIVO_HISTORICO
+            )
+
+        else:
+
+            st.warning(
+                "Todavía no hay información de inventario cargada. "
+                "Un administrador debe cargar el histórico base."
+            )
 
         st.stop()
 
@@ -1468,7 +944,15 @@ COLORES_EDAD = {
 #
 # Usa las columnas reales de cada mes (ENTRADA / SALIDA / STOCK ...)
 # que trae el histórico y las que calcula el Kardex.
-# Las salidas se toman en valor absoluto.
+# Las salidas se muestran en valor absoluto.
+#
+# Inventario inicial de cada mes = stock de cierre del mes anterior;
+# el del primer mes es el STOCK INICIAL del histórico (antes se
+# mostraba 0, corrección H-10).
+#
+# Rotación mensual = salidas del mes ÷ inventario inicial del mes,
+# calculada igual para todos los meses (antes solo los meses del
+# Kardex tenían rotación y los del histórico aparecían en 0, H-11).
 # ============================================================
 
 def construir_serie_mensual(dataframe):
@@ -1480,30 +964,37 @@ def construir_serie_mensual(dataframe):
 
         return 0
 
+    col_stock_inicial = col_exacta(dataframe, "STOCK INICIAL")
+    stock_anterior = (
+        suma(col_stock_inicial) if col_stock_inicial is not None else None
+    )
+
     datos = []
 
     for mes in ESQ["meses"]:
 
         entradas = suma(mes["entrada"])
         salidas = abs(suma(mes["salida"]))
+        cierre = suma(mes["stock"])
 
-        rotacion_mes = (
-            dataframe[mes["rotacion"]].mean()
-            if mes["rotacion"]
-            and mes["rotacion"] in dataframe.columns
-            else 0
-        )
+        if stock_anterior is not None and stock_anterior > EPS:
+            rotacion_mes = salidas / stock_anterior
+        else:
+            rotacion_mes = None
 
         datos.append({
             "Mes": mes["label"],
+            "Inventario inicial": stock_anterior,
             "Entradas": entradas,
             "Salidas": salidas,
             "Costo entradas": suma(mes["costo_entrada"]),
             "Costo salidas": abs(suma(mes["costo_salida"])),
             "Neto": entradas - salidas,
             "Rotacion": rotacion_mes,
-            "Stock de cierre": suma(mes["stock"])
+            "Stock de cierre": cierre
         })
+
+        stock_anterior = cierre
 
     resultado = pd.DataFrame(datos)
 
@@ -1516,8 +1007,30 @@ def construir_serie_mensual(dataframe):
 
 
 # ============================================================
-# SIDEBAR — NAVEGACIÓN LATERAL ESTILO ÁREA LIMPIA
+# SIDEBAR — NAVEGACIÓN SEGÚN EL USUARIO
+# admin: todas las páginas. inventarios: solo las de análisis.
 # ============================================================
+
+ICONOS_PAGINA = {
+    "Resumen e inventario": "▣",
+    "Evolución": "↗",
+    "Riesgos y detalle": "⚠",
+    "Órdenes de compra": "▤",
+    "Conciliación mensual": "⇄",
+    "Actualizar Kardex": "⟳",
+}
+
+SUBTITULOS_PAGINA = {
+    "Resumen e inventario": "Estado actual del inventario: valor, antigüedad y concentración por área, bodega y artículo.",
+    "Evolución": "Entradas, salidas y stock de cierre mes a mes.",
+    "Riesgos y detalle": "Inventario con antigüedad mayor a 12 meses y detalle por registro.",
+    "Órdenes de compra": "Cantidades solicitadas frente al inventario consolidado, el consumo reciente y la cobertura.",
+}
+
+# Si la sesión trae una página que el usuario no puede ver (p. ej. tras
+# cambiar de usuario), se vuelve a la primera permitida.
+if st.session_state.get("pagina_navegacion") not in PAGINAS_PERMITIDAS:
+    st.session_state["pagina_navegacion"] = PAGINAS_PERMITIDAS[0]
 
 with st.sidebar:
 
@@ -1526,8 +1039,8 @@ with st.sidebar:
         <div class="sidebar-brand">
             <div class="brand-mark">AL</div>
             <div>
-                <div class="brand-title">Área Limpia</div>
-                <div class="brand-subtitle">D.C. S.A.S. E.S.P.</div>
+                <div class="brand-title">Inventarios ALDC</div>
+                <div class="brand-subtitle">Área Limpia D.C. S.A.S. E.S.P.</div>
             </div>
         </div>
         """,
@@ -1535,82 +1048,51 @@ with st.sidebar:
     )
 
     st.markdown(
-        '<div class="sidebar-section-title">OPERACIÓN</div>',
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        """
-        <div class="sidebar-menu-item active">
-            <span class="sidebar-menu-icon">▣</span>
-            <span>Inventarios</span>
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        '<div class="sidebar-section-title">NAVEGACIÓN</div>',
+        '<div class="sidebar-section-title">ANÁLISIS</div>',
         unsafe_allow_html=True
     )
 
     pagina = st.radio(
         "Navegación",
-        [
-            "Resumen e inventario",
-            "Evolución",
-            "Riesgos y detalle",
-            "Órdenes de compra",
-            "Actualizar Kardex"
-        ],
+        PAGINAS_PERMITIDAS,
+        format_func=lambda p: f"{ICONOS_PAGINA.get(p, '•')}   {p}",
         label_visibility="collapsed",
         key="pagina_navegacion"
     )
 
     st.markdown(
-        '<div class="sidebar-section-title sidebar-session-title">SESIÓN</div>',
+        '<div class="sidebar-section-title">SESIÓN</div>',
         unsafe_allow_html=True
-    )
-
-    usuario_actual = st.session_state.get(
-        "usuario",
-        ""
     )
 
     st.markdown(
         f"""
         <div class="sidebar-user">
-            <div class="sidebar-user-name">◉ &nbsp;{usuario_actual}</div>
-            <div class="sidebar-user-status">● &nbsp;Sesión activa</div>
+            <div class="sidebar-user-name">{ui._e(USUARIO)}</div>
+            <div class="sidebar-user-role">{"Administrador" if ES_ADMIN else "Consulta"}</div>
+            <div class="sidebar-user-status">● Sesión activa</div>
         </div>
         """,
         unsafe_allow_html=True
     )
 
     if st.button(
-        "↪  Cerrar sesión",
+        "Cerrar sesión",
         use_container_width=True
     ):
 
+        for _clave in list(st.session_state.keys()):
+            st.session_state.pop(_clave, None)
+
         st.session_state["autenticado"] = False
-
-        st.session_state.pop(
-            "usuario",
-            None
-        )
-
-        st.session_state.pop(
-            "inicio_sesion",
-            None
-        )
 
         st.rerun()
 
     st.markdown(
-        """
-        <div style="margin-top:2.2rem; padding-top:0.9rem; border-top:1px solid rgba(255,255,255,0.13);">
-            <div style="color:#AFC1D7;font-size:0.73rem;line-height:1.55;">
-                Área Limpia D.C.<br>
+        f"""
+        <div style="margin-top:2rem; padding-top:0.9rem; border-top:1px solid rgba(255,255,255,0.13);">
+            <div style="color:#AFC1D7;font-size:0.72rem;line-height:1.55;">
+                Corte de datos: {ui._e(ESQ["corte"])}<br>
                 Sistema de análisis de inventarios
             </div>
         </div>
@@ -1618,51 +1100,49 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
+# Segunda barrera: la página elegida debe estar permitida.
+if pagina not in PAGINAS_PERMITIDAS:
+    st.error("No tienes acceso a esta página.")
+    st.stop()
+
 
 # ============================================================
-# PÁGINA: ACTUALIZAR KARDEX
-# (se muestra sola, sin encabezado ni filtros del tablero)
+# PÁGINAS DE ADMINISTRACIÓN
+# (se muestran solas, sin filtros del tablero; cada una vuelve a
+#  verificar el permiso del usuario de la sesión)
 # ============================================================
 
 if pagina == "Actualizar Kardex":
 
     pagina_actualizar_kardex(
         st,
-        st.session_state.get("usuario", ""),
+        USUARIO,
         ARCHIVO_ACTUALIZADO,
         ARCHIVO_HISTORICO
     )
 
     st.stop()
 
+if pagina == "Conciliación mensual":
+
+    conciliacion.pagina_conciliacion(st, df, BASE_DIR)
+
+    st.stop()
+
 
 # ============================================================
-# ENCABEZADO PRINCIPAL
+# ENCABEZADO DE LA PÁGINA
 # ============================================================
 
-_pill_periodo = (
-    f'<div class="header-pill">Antigüedad: {PERIODO_ANALISIS}</div>'
-    if PERIODO_ANALISIS
-    else ""
-)
-
-st.markdown(
-    f"""
-    <div class="dashboard-header">
-        <div>
-            <h1 style="margin:0 !important;">Inventarios 2026</h1>
-            <div class="dashboard-subtitle">
-                Análisis de inventario, rotación y movimientos acumulados — cifras del sistema de inventarios
-            </div>
-        </div>
-        <div class="header-pills">
-            <div class="header-pill primary">Inventario actual</div>
-            <div class="header-pill accent">Corte: {ESQ["corte"]}</div>
-            {_pill_periodo}
-
-    </div>
-    """,
-    unsafe_allow_html=True
+ui.encabezado_pagina(
+    st,
+    pagina,
+    SUBTITULOS_PAGINA.get(pagina, ""),
+    eyebrow="Inventarios ALDC",
+    pills=[
+        (f"Corte: {ESQ['corte']}", "accent"),
+        (f"Indicadores: {PERIODO_ANALISIS}" if PERIODO_ANALISIS else "", "primary"),
+    ],
 )
 
 # Aviso si el archivo cargado no trae la nueva metodología
@@ -1704,17 +1184,57 @@ if _faltantes:
 # FILTROS EN CASCADA
 # ============================================================
 
-with st.container(border=True):
+CLAVES_FILTROS = ("f_area", "f_bodega", "f_articulo", "f_antiguedad")
 
-    st.markdown(
-        """
-        <div class="filter-title">Filtros del informe</div>
-        <div class="filter-subtitle">Los indicadores y análisis se actualizan según la selección.</div>
-        """,
-        unsafe_allow_html=True
+
+def restablecer_filtros():
+    for clave in CLAVES_FILTROS:
+        st.session_state.pop(clave, None)
+
+
+def opciones_filtro(clave, opciones):
+    """Descarta una selección guardada que ya no está entre las opciones."""
+    if clave in st.session_state and st.session_state[clave] not in opciones:
+        st.session_state.pop(clave, None)
+    return opciones
+
+
+# Las páginas de análisis usan filtros; Órdenes de compra trabaja con
+# la base completa y no los muestra.
+MOSTRAR_FILTROS = pagina in acceso.PAGINAS_CONSULTA
+
+contenedor_filtros = (
+    st.container(border=True)
+    if MOSTRAR_FILTROS
+    else st.empty().container()
+)
+
+with contenedor_filtros:
+
+    if MOSTRAR_FILTROS:
+
+        cab1, cab2 = st.columns([4, 1])
+
+        with cab1:
+            st.markdown(
+                """
+                <div class="filter-title">Filtros del informe</div>
+                <div class="filter-subtitle">Los indicadores y análisis se actualizan según la selección.</div>
+                """,
+                unsafe_allow_html=True
+            )
+
+        with cab2:
+            st.button(
+                "Restablecer filtros",
+                on_click=restablecer_filtros,
+                use_container_width=True,
+                key="btn_restablecer_filtros"
+            )
+
+    col1, col2, col3, col4 = (
+        st.columns(4) if MOSTRAR_FILTROS else (st.empty(),) * 4
     )
-
-    col1, col2, col3, col4 = st.columns(4)
 
     # --------------------------------------------------------
     # ÁREA
@@ -1736,9 +1256,9 @@ with st.container(border=True):
 
     with col1:
 
-        area_seleccionada = st.selectbox(
-            "Área",
-            ["Todas"] + areas
+        area_seleccionada = (
+            st.selectbox("Área", opciones_filtro("f_area", ["Todas"] + areas), key="f_area")
+            if MOSTRAR_FILTROS else "Todas"
         )
 
     df_area = df.copy()
@@ -1783,9 +1303,9 @@ with st.container(border=True):
 
     with col2:
 
-        bodega_seleccionada = st.selectbox(
-            "Bodega",
-            ["Todas"] + bodegas
+        bodega_seleccionada = (
+            st.selectbox("Bodega", opciones_filtro("f_bodega", ["Todas"] + bodegas), key="f_bodega")
+            if MOSTRAR_FILTROS else "Todas"
         )
 
     df_bodega = df_area.copy()
@@ -1817,9 +1337,9 @@ with st.container(border=True):
 
     with col3:
 
-        articulo_seleccionado = st.selectbox(
-            "Artículo",
-            ["Todos"] + articulos
+        articulo_seleccionado = (
+            st.selectbox("Artículo", opciones_filtro("f_articulo", ["Todos"] + articulos), key="f_articulo")
+            if MOSTRAR_FILTROS else "Todos"
         )
 
     df_articulo = df_bodega.copy()
@@ -1852,9 +1372,9 @@ with st.container(border=True):
 
     with col4:
 
-        antiguedad_seleccionada = st.selectbox(
-            "Rotación",
-            ["Todas"] + antiguedades
+        antiguedad_seleccionada = (
+            st.selectbox("Antigüedad", opciones_filtro("f_antiguedad", ["Todas"] + antiguedades), key="f_antiguedad")
+            if MOSTRAR_FILTROS else "Todas"
         )
 
     df_filtrado = df_articulo.copy()
@@ -1867,21 +1387,24 @@ with st.container(border=True):
             == antiguedad_seleccionada
         ]
 
-    st.markdown(
-        f'<div class="filter-records">Registros analizados: {len(df_filtrado):,}'.replace(",", ".") + '</div>',
-        unsafe_allow_html=True
-    )
+    if MOSTRAR_FILTROS:
+        st.markdown(
+            f'<div class="filter-records">Registros analizados: {formato_entero(len(df_filtrado))}</div>',
+            unsafe_allow_html=True
+        )
 
 
 # ============================================================
-# CORRECCIÓN 4 — SOLO REGISTROS CON INVENTARIO EN EL CORTE
+# BASE DE LOS INDICADORES DE VALOR
 #
-# La nueva clasificación ya no genera "Sin stock": un artículo
-# con stock 0 en el último mes igual recibe una categoría de
-# antigüedad (por defecto "Entre 0 y 3 meses", o "Mayor a 12
-# meses" si tuvo inventario promedio y CMV cero). Para contar
-# registros, artículos o alertas hay que considerar únicamente
-# los que realmente tienen inventario al corte.
+# Todo artículo recibe una categoría de antigüedad, aunque tenga
+# stock 0 al corte (por ejemplo "Entre 0 y 3 meses" si su inventario
+# promedio y su CMV son cero). Por eso el stock, el valor, los
+# porcentajes, los conteos y las alertas se calculan SOLO con los
+# registros que tienen inventario al corte (stock > 0). Así el
+# numerador y el denominador de cada porcentaje usan la misma base
+# (corrección H-09). Rotación y días usan todos los registros del
+# filtro, porque también miden lo que ya salió.
 # ============================================================
 
 if COL_STOCK in df_filtrado.columns:
@@ -1908,37 +1431,57 @@ df_mensual = construir_serie_mensual(
 # INDICADORES GENERALES DEL FILTRO
 # ============================================================
 
-stock_total, valor_total, rotacion, dias_promedio = kpis_corte(
+_, _, rotacion, dias_promedio = kpis_corte(
     df_filtrado,
     ESQ
 )
 
-# Suma de la columna de costo: base de todos los porcentajes mostrados
-valor_total_col = suma_columna(df_filtrado, COL_COSTE)
+stock_total = suma_columna(df_con_stock, COL_STOCK)
+valor_total = suma_columna(df_con_stock, COL_COSTE)
+
+# Base única de todos los porcentajes de valor mostrados
+valor_total_col = valor_total
+
+# Registros fuera de la base: sin stock al corte pero con valor
+# (costos residuales heredados o stocks negativos).
+if COL_STOCK in df_filtrado.columns and COL_COSTE in df_filtrado.columns:
+    _fuera = df_filtrado[
+        (df_filtrado[COL_STOCK].fillna(0) <= EPS)
+        & (df_filtrado[COL_COSTE].fillna(0).abs() > 0.5)
+    ]
+else:
+    _fuera = df_filtrado.iloc[0:0]
+
+NOTA_BASE_VALOR = (
+    f"Valores calculados sobre {formato_entero(len(df_con_stock))} registros con "
+    f"stock al corte {ESQ['corte']}."
+    + (
+        f" Se excluyen {formato_entero(len(_fuera))} registros sin stock que "
+        f"conservan valor ({formato_moneda(suma_columna(_fuera, COL_COSTE))}); "
+        "revísalos en Riesgos y detalle."
+        if len(_fuera)
+        else ""
+    )
+)
 
 
 # ============================================================
 # PÁGINA 1
-# RESUMEN EJECUTIVO
+# RESUMEN E INVENTARIO
 # ============================================================
 
 if pagina in ("Resumen", "Resumen e inventario"):
 
-    st.title(
-        "Resumen ejecutivo"
-    )
-
-    st.caption(
+    ui.seccion(
+        st,
+        "Resumen ejecutivo",
         "Lectura estratégica del estado actual del inventario."
+        + (
+            f" Antigüedad según días de rotación (inventario promedio ÷ CMV "
+            f"× 360, meses de 30 días) del período {PERIODO_ANALISIS}."
+            if PERIODO_ANALISIS else ""
+        ),
     )
-
-    if PERIODO_ANALISIS:
-
-        st.caption(
-            f"Antigüedad según días de rotación "
-            f"(inventario promedio ÷ CMV × 365) del período "
-            f"{PERIODO_ANALISIS}."
-        )
 
     # --------------------------------------------------------
     # KPIs
@@ -1966,142 +1509,58 @@ if pagina in ("Resumen", "Resumen e inventario"):
         valor_total_col
     )
 
-    k1, k2, k3, k4 = st.columns(4)
+    ui.fila_kpis(st, [
+        ("Stock actual", formato_numero(stock_total),
+         f"unidades al corte {ESQ['corte']}", "azul"),
+        ("Valor del inventario", formato_moneda(valor_total),
+         f"{formato_entero(len(df_con_stock))} registros con stock", "oscuro"),
+        ("Días de inventario", formato_numero(dias_promedio, 1),
+         f"rotación {formato_numero(rotacion)} veces en 12 meses", "azul"),
+        ("Valor mayor a 12 meses", formato_moneda(valor_mayor_12),
+         f"{porcentaje_envejecido:.1f}% del valor del inventario", "naranja"),
+    ])
 
-    with k1:
-        st.metric(
-            "📦 Stock actual",
-            formato_numero(stock_total)
-        )
-
-    with k2:
-        st.metric(
-            "💰 Valor inventario",
-            formato_moneda(valor_total)
-        )
-
-    with k3:
-        st.metric(
-            "⏱️ Días de inventario",
-            formato_numero(dias_promedio)
-        )
-
-    with k4:
-        st.metric(
-            "⚠️ Valor > 12 meses",
-            formato_moneda(valor_mayor_12),
-            f"{porcentaje_envejecido:.1f}% del valor"
-        )
-
-    st.write("")
+    st.caption(NOTA_BASE_VALOR)
 
     # --------------------------------------------------------
     # LECTURA AUTOMÁTICA
     # --------------------------------------------------------
 
-    if abs(valor_total - valor_total_col) > 1:
-        st.caption(
-            "⚠️ El valor del KPI difiere de la suma de la columna de costo del corte; "
-            "los porcentajes usan la suma de la columna."
-        )
+    hay_meses = len(df_mensual) > 0
 
     mes_mayor_entrada = (
-        df_mensual.loc[
-            df_mensual["Entradas"].idxmax(),
-            "Mes"
-        ]
-        if len(df_mensual) > 0
-        else "-"
+        df_mensual.loc[df_mensual["Entradas"].idxmax(), "Mes"] if hay_meses else "-"
     )
-
-    mayor_entrada = (
-        df_mensual["Entradas"].max()
-        if len(df_mensual) > 0
-        else 0
-    )
+    mayor_entrada = df_mensual["Entradas"].max() if hay_meses else 0
 
     mes_mayor_neto = (
-        df_mensual.loc[
-            df_mensual["Neto"].idxmax(),
-            "Mes"
-        ]
-        if len(df_mensual) > 0
-        else "-"
+        df_mensual.loc[df_mensual["Neto"].idxmax(), "Mes"] if hay_meses else "-"
     )
+    mayor_neto = df_mensual["Neto"].max() if hay_meses else 0
 
-    mayor_neto = (
-        df_mensual["Neto"].max()
-        if len(df_mensual) > 0
-        else 0
-    )
+    ui.seccion(st, "¿Qué está ocurriendo?")
 
-    # --------------------------------------------------------
-    # TRES HALLAZGOS
-    # --------------------------------------------------------
-
-    st.subheader("🔍 ¿Qué está ocurriendo?")
-
-    h1, h2, h3 = st.columns(3)
-
-    with h1:
-
-        with st.container(border=True):
-
-            st.markdown("### 📥 Mayor entrada")
-
-            st.metric(
-                mes_mayor_entrada,
-                formato_numero(mayor_entrada)
-            )
-
-            st.caption(
-                "Mes con el mayor volumen de unidades ingresadas."
-            )
-
-    with h2:
-
-        with st.container(border=True):
-
-            st.markdown("### 📊 Mayor acumulación")
-
-            st.metric(
-                mes_mayor_neto,
-                formato_numero(mayor_neto)
-            )
-
-            st.caption(
-                "Mayor incremento neto de inventario del periodo."
-            )
-
-    with h3:
-
-        with st.container(border=True):
-
-            st.markdown("### ⚠️ Inventario envejecido")
-
-            st.metric(
-                "Mayor a 12 meses",
-                f"{porcentaje_envejecido:.1f}%"
-            )
-
-            st.caption(
-                "Participación del inventario envejecido sobre el valor total."
-            )
+    ui.fila_kpis(st, [
+        (f"Mayor entrada · {mes_mayor_entrada}", formato_numero(mayor_entrada),
+         "mes con más unidades ingresadas", "azul"),
+        (f"Mayor acumulación · {mes_mayor_neto}", formato_numero(mayor_neto),
+         "mayor incremento neto del stock", "azul"),
+        ("Inventario envejecido", f"{porcentaje_envejecido:.1f}%",
+         "del valor tiene más de 12 meses", "naranja"),
+    ])
 
     # --------------------------------------------------------
     # DISTRIBUCIÓN ESTRATÉGICA
     # --------------------------------------------------------
 
-    st.subheader(
-        "📌 ¿Dónde está concentrado el inventario?"
-    )
+    ui.seccion(st, "¿Dónde está concentrado el inventario?")
 
     col_a, col_b = st.columns([1.1, 1])
 
     with col_a:
 
         resumen_area = (
-            df_filtrado
+            df_con_stock
             .groupby("AREA", as_index=False)
             .agg(
                 Valor=(COL_COSTE, "sum"),
@@ -2210,7 +1669,7 @@ if pagina in ("Resumen", "Resumen e inventario"):
             )
 
             fig_edad.update_layout(
-                title="Valor del inventario por antigüedad (LIFO)",
+                title="Valor del inventario por antigüedad",
                 xaxis_title="Valor del inventario",
                 yaxis_title="",
                 showlegend=False
@@ -2245,12 +1704,10 @@ if pagina in ("Resumen", "Resumen e inventario"):
 
 if pagina in ("Inventario", "Resumen e inventario"):
 
-    st.title(
-        "Inventario"
-    )
-
-    st.caption(
-        "Concentración del inventario y principales componentes del valor."
+    ui.seccion(
+        st,
+        "Inventario",
+        "Concentración del inventario y principales componentes del valor.",
     )
 
     # --------------------------------------------------------
@@ -2278,43 +1735,28 @@ if pagina in ("Inventario", "Resumen e inventario"):
         else 0
     )
 
-    k1, k2, k3 = st.columns(3)
-
-    with k1:
-        st.metric(
-            "🧾 Artículos",
-            formato_entero(numero_articulos)
-        )
-
-    with k2:
-        st.metric(
-            "🏭 Bodegas",
-            formato_entero(numero_bodegas)
-        )
-
-    with k3:
-        st.metric(
-            "💰 Valor promedio / artículo",
-            formato_moneda(valor_promedio_articulo)
-        )
-
-    st.write("")
+    ui.fila_kpis(st, [
+        ("Artículos con stock", formato_entero(numero_articulos),
+         "referencias distintas al corte", "azul"),
+        ("Bodegas", formato_entero(numero_bodegas), "con inventario al corte", "azul"),
+        ("Valor promedio por artículo", formato_moneda(valor_promedio_articulo),
+         "valor del inventario ÷ artículos", "oscuro"),
+    ])
 
     # --------------------------------------------------------
     # TOP ARTÍCULOS
     # --------------------------------------------------------
 
-    st.subheader(
-        "🏆 ¿Qué artículos explican el valor?"
-    )
+    ui.seccion(st, "¿Qué artículos explican el valor?")
 
     if (
-        "Articulo" in df_filtrado.columns
-        and COL_COSTE in df_filtrado.columns
+        "Articulo" in df_con_stock.columns
+        and COL_COSTE in df_con_stock.columns
+        and len(df_con_stock) > 0
     ):
 
         top_articulos = (
-            df_filtrado
+            df_con_stock
             .groupby(
                 ["Articulo", "Bodega"],
                 as_index=False
@@ -2386,8 +1828,10 @@ if pagina in ("Inventario", "Resumen e inventario"):
     # MATRIZ ÁREA / ANTIGÜEDAD
     # --------------------------------------------------------
 
-    st.subheader(
-        "🧭 ¿Dónde se concentra el inventario envejecido?"
+    ui.seccion(
+        st,
+        "¿Dónde se concentra el inventario envejecido?",
+        "Valor del inventario con stock al corte, por área y rango de antigüedad.",
     )
 
     if (
@@ -2444,12 +1888,10 @@ if pagina in ("Inventario", "Resumen e inventario"):
     # BODEGAS
     # --------------------------------------------------------
 
-    st.subheader(
-        "🏭 Concentración por bodega"
-    )
+    ui.seccion(st, "Concentración por bodega")
 
     resumen_bodega = (
-        df_filtrado
+        df_con_stock
         .groupby(
             "Bodega",
             as_index=False
@@ -2508,13 +1950,10 @@ if pagina in ("Inventario", "Resumen e inventario"):
 
 elif pagina == "Evolución":
 
-    st.title(
-        "Evolución del inventario"
-    )
-
-    st.caption(
-        "Análisis mensual para relacionar entradas, salidas, "
-        "acumulación y trayectoria del inventario."
+    ui.seccion(
+        st,
+        "Comportamiento del periodo",
+        "Relación entre entradas, salidas, acumulación y trayectoria del inventario.",
     )
 
     # --------------------------------------------------------
@@ -2527,97 +1966,59 @@ elif pagina == "Evolución":
             "muestra el histórico de los registros que hoy pertenecen a ese rango."
         )
 
+    hay_meses = len(df_mensual) > 0
+
     total_entradas = df_mensual["Entradas"].sum()
     total_salidas = df_mensual["Salidas"].sum()
-
-    neto_periodo = (
-        total_entradas
-        - total_salidas
-    )
-
-    indice_mayor_stock = (
-        df_mensual["Stock de cierre"].idxmax()
-        if len(df_mensual) > 0
-        else 0
-    )
+    neto_periodo = total_entradas - total_salidas
 
     mes_mayor_stock = (
-        df_mensual.loc[
-            indice_mayor_stock,
-            "Mes"
-        ]
-        if len(df_mensual) > 0
-        else "-"
+        df_mensual.loc[df_mensual["Stock de cierre"].idxmax(), "Mes"]
+        if hay_meses else "-"
     )
+    stock_mayor = df_mensual["Stock de cierre"].max() if hay_meses else 0
 
-    stock_mayor = (
-        df_mensual["Stock de cierre"].max()
-        if len(df_mensual) > 0
-        else 0
-    )
-
-    k1, k2, k3, k4 = st.columns(4)
-
-    with k1:
-        st.metric(
-            "📥 Entradas acumuladas",
-            formato_numero(total_entradas)
-        )
-
-    with k2:
-        st.metric(
-            "📤 Salidas acumuladas",
-            formato_numero(total_salidas)
-        )
-
-    with k3:
-        st.metric(
-            "📊 Neto del periodo",
-            formato_numero(neto_periodo)
-        )
-
-    with k4:
-        st.metric(
-            "📈 Mayor stock del periodo",
-            formato_numero(stock_mayor),
-            mes_mayor_stock
-        )
-
-    st.write("")
+    ui.fila_kpis(st, [
+        ("Entradas acumuladas", formato_numero(total_entradas),
+         f"{len(df_mensual)} meses", "verde"),
+        ("Salidas acumuladas", formato_numero(total_salidas),
+         "unidades despachadas", "rojo"),
+        ("Neto del periodo", formato_numero(neto_periodo),
+         "entradas − salidas", "azul"),
+        ("Mayor stock de cierre", formato_numero(stock_mayor),
+         mes_mayor_stock, "oscuro"),
+    ])
 
     # --------------------------------------------------------
     # GRÁFICO PRINCIPAL
     # --------------------------------------------------------
 
-    st.subheader(
-        "🔎 Entradas vs. nivel de inventario"
-    )
-
-    st.caption(
-        "La línea representa el stock de cierre de cada mes. "
-
+    ui.seccion(
+        st,
+        "Entradas y salidas mensuales vs. stock de cierre",
+        "Barras: entradas (arriba) y salidas (abajo). Línea: stock de cierre de cada mes.",
     )
 
     fig_evolucion = go.Figure()
 
     # --------------------------------------------------------
     # UMBRALES ANALÍTICOS
+    # Meses "críticos": entradas y stock de cierre en el cuartil
+    # superior del periodo (percentil 75).
+    # CORRECCIÓN H-01: la definición de df_marcados se había comentado
+    # junto con las marcas del gráfico, pero las tablas de abajo la
+    # usan y la página fallaba (NameError). Se restituye la definición;
+    # las marcas sobre el gráfico siguen desactivadas.
     # --------------------------------------------------------
 
     umbral_entrada = df_mensual["Entradas"].quantile(0.75)
     umbral_stock = df_mensual["Stock de cierre"].quantile(0.75)
 
-    stock_max = df_mensual["Stock de cierre"].max()
-
-    # --------------------------------------------------------
-    # INVENTARIO INICIAL DE CADA MES
-    # --------------------------------------------------------
-
-    df_mensual["Inventario inicial"] = (
-        df_mensual["Stock de cierre"]
-        .shift(1)
-        .fillna(0)
-    )
+    df_marcados = df_mensual[
+        (df_mensual["Entradas"] >= umbral_entrada)
+        & (df_mensual["Stock de cierre"] >= umbral_stock)
+        & (df_mensual["Entradas"] > 0)
+    ].copy()
 
     # --------------------------------------------------------
     # ENTRADAS
@@ -2687,10 +2088,10 @@ elif pagina == "Evolución":
             ],
             hovertemplate=(
                 "<b>%{x}</b><br>"
-                "📦 Inventario inicial: %{customdata[0]:,.2f}<br>"
-                "📥 Entradas: %{customdata[1]:,.2f}<br>"
-                "📤 Salidas: %{customdata[2]:,.2f}<br>"
-                "📦 Inventario final: %{customdata[3]:,.2f}"
+                "Inventario inicial: %{customdata[0]:,.2f}<br>"
+                "Entradas: %{customdata[1]:,.2f}<br>"
+                "Salidas: %{customdata[2]:,.2f}<br>"
+                "Inventario final: %{customdata[3]:,.2f}"
                 "<extra></extra>"
             )
         )
@@ -2843,9 +2244,7 @@ elif pagina == "Evolución":
     # ENTRADA ALTA + STOCK ALTO
     # --------------------------------------------------------
 
-    st.subheader(
-        "💰 Referencias con mayor impacto económico"
-    )
+    ui.seccion(st, "Referencias con mayor impacto económico")
 
     st.caption(
         "Muestra las referencias que concentran el mayor valor "
@@ -3107,19 +2506,19 @@ elif pagina == "Evolución":
                 column_config={
                     "Valor entradas críticas":
                         st.column_config.NumberColumn(
-                            "💰 Valor entradas críticas",
+                            "Valor entradas críticas",
                             format="$%,.0f"
                         ),
 
                     "Valor inventario actual":
                         st.column_config.NumberColumn(
-                            "📦 Valor inventario actual",
+                            "Valor inventario actual",
                             format="$%,.0f"
                         ),
 
                     "Participación":
                         st.column_config.NumberColumn(
-                            "📊 Participación",
+                            "Participación",
                             format="%.1f%%"
                         ),
 
@@ -3149,9 +2548,7 @@ elif pagina == "Evolución":
     # DETECCIÓN DE MESES DE POSIBLE SOBREABASTECIMIENTO
     # --------------------------------------------------------
 
-    st.subheader(
-        "🧠 Lectura analítica de los movimientos"
-    )
+    ui.seccion(st, "Lectura analítica de los movimientos")
 
     if len(df_mensual) > 0:
 
@@ -3160,7 +2557,7 @@ elif pagina == "Evolución":
         if len(coincidencias) > 0:
 
             st.warning(
-                "⚠️ Se identificaron meses en los que "
+                "Se identificaron meses en los que "
                 "las entradas estuvieron entre las más altas "
                 "del periodo mientras el stock "
                 "también estaba en niveles altos."
@@ -3279,7 +2676,7 @@ elif pagina == "Evolución":
         )
 
         fig_rotacion.update_layout(
-            title="Rotación promedio por registro",
+            title="Rotación mensual (salidas ÷ inventario inicial del mes)",
             xaxis_title="",
             yaxis_title="Rotación"
         )
@@ -3302,12 +2699,10 @@ elif pagina == "Evolución":
 
 elif pagina == "Riesgos y detalle":
 
-    st.title(
-        "Riesgos y detalle"
-    )
-
-    st.caption(
-        "Priorización de inventarios que requieren revisión."
+    ui.seccion(
+        st,
+        "Inventario con más de 12 meses",
+        "Priorización de inventarios que requieren revisión (solo registros con stock al corte).",
     )
 
     # --------------------------------------------------------
@@ -3352,41 +2747,23 @@ elif pagina == "Riesgos y detalle":
         valor_total_col
     )
 
-    k1, k2, k3, k4 = st.columns(4)
+    ui.fila_kpis(st, [
+        ("Registros mayores a 12 meses", formato_entero(cantidad_alertas),
+         "bodega + referencia con stock", "naranja"),
+        ("Stock involucrado", formato_numero(stock_alerta), "unidades", "azul"),
+        ("Valor comprometido", formato_moneda(valor_alerta),
+         "valor al corte", "oscuro"),
+        ("Participación", f"{participacion_alerta:.1f}%",
+         "del valor total del inventario", "naranja"),
+    ])
 
-    with k1:
-        st.metric(
-            "⚠️ Registros > 12 meses",
-            formato_entero(cantidad_alertas)
-        )
-
-    with k2:
-        st.metric(
-            "📦 Stock involucrado",
-            formato_numero(stock_alerta)
-        )
-
-    with k3:
-        st.metric(
-            "💰 Valor comprometido",
-            formato_moneda(valor_alerta)
-        )
-
-    with k4:
-        st.metric(
-            "📊 Participación",
-            f"{participacion_alerta:.1f}%"
-        )
-
-    st.write("")
+    st.caption(NOTA_BASE_VALOR)
 
     # --------------------------------------------------------
     # TOP RIESGOS
     # --------------------------------------------------------
 
-    st.subheader(
-        "🚨 Principales inventarios a revisar"
-    )
+    ui.seccion(st, "Principales inventarios a revisar")
 
     if len(df_alertas) > 0:
 
@@ -3466,9 +2843,42 @@ elif pagina == "Riesgos y detalle":
     # inventario promedio, CMV, rotación y días de rotación.
     # --------------------------------------------------------
 
-    st.subheader(
-        "📋 Detalle de registros"
+    ui.seccion(
+        st,
+        "Detalle de registros",
+        "Indicadores que explican la antigüedad: inventario promedio, CMV, rotación y días.",
     )
+
+    d1, d2 = st.columns([1.3, 1])
+
+    with d1:
+        vista_detalle = st.radio(
+            "Registros",
+            ["Con stock al corte", "Sin stock que conservan valor", "Todos"],
+            horizontal=True,
+            key="riesgos_vista_detalle"
+        )
+
+    with d2:
+        buscar_detalle = st.text_input(
+            "Buscar código o artículo",
+            key="riesgos_buscar"
+        )
+
+    if vista_detalle == "Con stock al corte":
+        base_detalle = df_con_stock
+    elif vista_detalle == "Sin stock que conservan valor":
+        base_detalle = _fuera
+    else:
+        base_detalle = df_filtrado
+
+    if buscar_detalle.strip():
+        _b = buscar_detalle.strip().upper()
+        _mascara = pd.Series(False, index=base_detalle.index)
+        for _c in ("Codigo Articulo", "Articulo"):
+            if _c in base_detalle.columns:
+                _mascara |= base_detalle[_c].astype(str).str.upper().str.contains(_b, regex=False)
+        base_detalle = base_detalle[_mascara]
 
     columnas_detalle = [
         "AREA",
@@ -3490,14 +2900,16 @@ elif pagina == "Riesgos y detalle":
 
         if (
             columna is not None
-            and columna in df_filtrado.columns
+            and columna in base_detalle.columns
             and columna not in columnas_disponibles
         ):
             columnas_disponibles.append(columna)
 
-    df_detalle = df_filtrado[
+    df_detalle = base_detalle[
         columnas_disponibles
     ].copy()
+
+    st.caption(f"{formato_entero(len(df_detalle))} registros")
 
     if COL_COSTE in df_detalle.columns:
         df_detalle = df_detalle.sort_values(
@@ -3542,7 +2954,7 @@ elif pagina == "Riesgos y detalle":
     )
 
     st.download_button(
-        label="⬇️ Descargar detalle en CSV",
+        label="Descargar detalle en CSV",
         data=csv,
         file_name="detalle_inventarios_aldc.csv",
         mime="text/csv"
@@ -3567,6 +2979,11 @@ elif pagina == "Riesgos y detalle":
 # ============================================================
 
 elif pagina == "Órdenes de compra":
+
+    # Verificación en el momento de ejecutar (no basta con ocultar la página)
+    if not acceso.es_admin(acceso.usuario_sesion(st), SECRETOS):
+        st.error("Tu usuario no tiene permiso para esta página.")
+        st.stop()
 
     import io
     import html
@@ -3640,58 +3057,14 @@ elif pagina == "Órdenes de compra":
         return None
 
     def oc_numero(valor):
-        """Convierte un valor (número o texto) a float."""
-
-        if not isinstance(valor, str):
-            try:
-                v = float(valor)
-                return 0.0 if pd.isna(v) else v
-            except (TypeError, ValueError):
-                return 0.0
-
-        texto = (
-            valor.strip()
-            .replace("$", "")
-            .replace(" ", "")
-            .replace("\u00a0", "")
-        )
-
-        if not texto or texto.lower() in {"nan", "none", "null", "-"}:
-            return 0.0
-
-        if "," in texto and "." in texto:
-            if texto.rfind(",") > texto.rfind("."):
-                # 1.234,56
-                texto = texto.replace(".", "").replace(",", ".")
-            else:
-                # 1,234.56
-                texto = texto.replace(",", "")
-
-        elif "," in texto:
-            partes = texto.split(",")
-            if len(partes) == 2 and len(partes[1]) in (1, 2):
-                texto = partes[0] + "." + partes[1]
-            else:
-                texto = "".join(partes)
-
-        elif texto.count(".") > 1:
-            # 1.234.567
-            texto = texto.replace(".", "")
-
-        try:
-            return float(texto)
-        except (ValueError, TypeError):
-            return 0.0
+        """Convierte un valor (número o texto) a float con las mismas
+        reglas que el motor del Kardex (motor_lifo._a_float)."""
+        resultado = a_numero(pd.Series([valor], dtype=object)).iloc[0]
+        return float(resultado)
 
     def oc_serie_numerica(serie):
         """Serie -> float. Rápido si ya es numérica."""
-        if pd.api.types.is_numeric_dtype(serie):
-            return (
-                pd.to_numeric(serie, errors="coerce")
-                .fillna(0.0)
-                .astype(float)
-            )
-        return serie.apply(oc_numero).astype(float)
+        return a_numero(serie)
 
     def oc_normalizar_referencia(valor):
         """Normaliza códigos sin convertirlos a número."""
@@ -3765,13 +3138,6 @@ elif pagina == "Órdenes de compra":
     # ============================================================
     # 2. ENCABEZADO Y CARGA DEL ARCHIVO
     # ============================================================
-
-    st.title("Órdenes de compra")
-
-    st.markdown(
-        "Analiza las cantidades solicitadas frente al inventario "
-        "consolidado, el consumo reciente y la cobertura proyectada."
-    )
 
     st.info(
         "La evaluación usa los seis meses calendario más recientes "
@@ -3982,14 +3348,16 @@ elif pagina == "Órdenes de compra":
         key="oc_estados_excluidos"
     )
     
+    # CORRECCIÓN H-07: el texto listaba como activos estados que la
+    # lista por defecto excluye. Ahora se calcula a partir de la
+    # selección real del usuario.
     estados_activos = [
-        "[6] - EnTransito",
-        "[7] - EnTransito_EntradaParcial"
+        e for e in estados_detectados if e not in estados_excluidos
     ]
-    
+
     st.caption(
-        "Se consideran activos: "
-        + (", ".join(estados_activos) or "ninguno")
+        "Se analizan: "
+        + (", ".join(estados_activos) or "ningún estado")
         + ". Cualquier estado que no excluyas aquí se analiza."
     )
     
@@ -4151,6 +3519,22 @@ elif pagina == "Órdenes de compra":
     )
 
     hist = hist[hist["_ref_oc"] != ""].copy()
+
+    # R-07: decisión explícita sobre el stock de la bodega de obsoletos.
+    # Por defecto se conserva el comportamiento anterior (se incluye).
+    incluir_obsoletos = st.checkbox(
+        "Incluir la bodega 44 (OBSOLETOS) en el stock que cubre las órdenes",
+        value=True,
+        key="oc_incluir_obsoletos",
+        help=(
+            "Si lo desmarcas, el stock de OBSOLETOS no cuenta como cobertura "
+            "y no genera alertas de posible exceso."
+        ),
+    )
+
+    if not incluir_obsoletos:
+        _es_obsoleto = hist["_bodega_oc"].apply(numero_bodega) == "44"
+        hist.loc[_es_obsoleto, "_stock_oc"] = 0.0
 
     if "LLAVE" in df_inv.columns:
 
@@ -4610,17 +3994,16 @@ elif pagina == "Órdenes de compra":
         .sum()
     )
 
-    k1, k2, k3, k4 = st.columns(4)
-
-    k1.metric("Órdenes activas", f"{analisis['_orden_oc'].nunique():,}")
-    k2.metric("Referencias analizadas", f"{analisis['_ref_oc'].nunique():,}")
-    k3.metric("Casos para revisión", f"{len(alertas_oc):,}")
-    k4.metric("Posible exceso", f"{total_exceso:,}")
-
-    st.caption(
-        "Cantidad total en las órdenes activas: "
-        f"{analisis['_cantidad_oc'].sum():,.2f}"
-    )
+    ui.fila_kpis(st, [
+        ("Órdenes analizadas", formato_entero(analisis["_orden_oc"].nunique()),
+         f"cantidad total {formato_numero(analisis['_cantidad_oc'].sum())}", "azul"),
+        ("Referencias analizadas", formato_entero(analisis["_ref_oc"].nunique()),
+         "stock consolidado de todas las bodegas", "azul"),
+        ("Casos para revisión", formato_entero(len(alertas_oc)),
+         "alertas preventivas", "naranja"),
+        ("Posible exceso", formato_entero(total_exceso),
+         f"cobertura proyectada > {OC_META_COBERTURA} meses", "rojo"),
+    ])
 
     # ============================================================
     # 13. TABLA DE ALERTAS
@@ -4777,7 +4160,25 @@ elif pagina == "Órdenes de compra":
                         "el envío."
                     )
 
+                elif not st.button(
+                    f"Enviar correo con {len(alertas_oc)} alertas "
+                    f"a {len(destinatarios)} destinatario(s)",
+                    key="oc_enviar_correo",
+                ):
+
+                    # CORRECCIÓN H-08: antes el correo se enviaba solo al
+                    # cargar el archivo. Ahora requiere la acción del usuario.
+                    st.caption(
+                        "El correo solo se envía cuando presionas el botón. "
+                        "Destinatarios: " + ", ".join(destinatarios)
+                    )
+
                 else:
+
+                    acceso.exigir_admin(
+                        acceso.usuario_sesion(st), SECRETOS,
+                        "enviar correos de alertas",
+                    )
 
                     columnas_correo = [
                         c for c in [

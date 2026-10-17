@@ -1,16 +1,24 @@
 # -*- coding: utf-8 -*-
 """
 motor_lifo.py
-Motor de actualización Histórico + Kardex y pestaña de Streamlit
-"Actualizar Kardex" para el tablero Inventarios ALDC.
+Motor de cálculo Histórico + Kardex del tablero Inventarios ALDC.
 
-La reconstrucción de stock y costos continúa utilizando el motor
-LIFO para conservar la trazabilidad y las hojas de control.
+* Parte del último mes del histórico base (mayo 2026 en el archivo
+  inicial; se detecta por las columnas, no está fijo en el código) y
+  reconstruye los meses siguientes con los movimientos del Kardex:
+      stock final = stock inicial + entradas + salidas (salidas < 0)
+* Respeta el signo de las cantidades según la convención del archivo.
+* Conserva las reglas de negocio: bodegas 11, 12, 18, 19, 20 y 21
+  excluidas, movimientos ANULADO excluidos, costo con IVA, salidas sin
+  existencia registradas y no descontadas.
+* La reconstrucción de lotes LIFO se conserva para la trazabilidad y
+  las hojas de control.
+* La antigüedad se calcula con los indicadores de 12 meses (inventario
+  promedio, CMV, días de rotación) en la columna ANTIGUEDAD 12 MESES,
+  última columna de la tabla.
 
-La antigüedad ya NO se calcula con los lotes LIFO: se calcula con los
-indicadores de rotación (inventario promedio, CMV, días de rotación) y
-se escribe en la columna ANTIGUEDAD 12 MESES, que queda como la ÚLTIMA
-columna de la tabla.
+La gestión de cargues mensuales (periodos guardados, reemplazos,
+continuidad) está en gestion_kardex.py.
 """
 import io
 import os
@@ -24,7 +32,6 @@ import openpyxl
 
 
 EPS = 1e-7
-ANIO = 2026
 HOJA_SALIDA = "INVENTARIO"
 
 NOMBRES_MES = [
@@ -37,7 +44,9 @@ BODEGAS_EXCLUIDAS = {"11", "12", "18", "19", "20", "21"}
 
 MARCA_NUEVO = "NUEVO DESDE KARDEX"
 
-# Fecha que representa el stock inicial
+# Fecha que representa el stock inicial cuando el histórico no permite
+# deducirla (se usa el último día del mes anterior al primer mes del
+# histórico; con el archivo base actual es el 31-may-2025).
 FECHA_STOCK_INICIAL = pd.Timestamp("2025-05-31")
 
 # ============================================================
@@ -80,17 +89,64 @@ def _fin_mes(anio, mes):
 
 
 # ============================================================
-# MESES HISTÓRICOS
+# PERIODOS (año + mes) — SIN AÑOS FIJOS EN EL CÓDIGO
 # ============================================================
 
-# Jun-2025 ... May-2026
-MESES_HISTORICO = [
-    (f"{NOMBRES_MES[m - 1]} {a}", _fin_mes(a, m))
-    for a, m in (
-        [(2025, x) for x in range(6, 13)]
-        + [(2026, x) for x in range(1, 6)]
-    )
-]
+def periodo_num(anio, mes):
+    """Número correlativo del periodo (permite restar meses)."""
+    return int(anio) * 12 + int(mes)
+
+
+def periodo_de_num(numero):
+    """Inverso de periodo_num -> (anio, mes)."""
+    numero = int(numero)
+    anio = (numero - 1) // 12
+    return anio, numero - anio * 12
+
+
+def etiqueta_periodo(anio, mes):
+    """'2026-06'"""
+    return f"{int(anio)}-{int(mes):02d}"
+
+
+def periodo_de_etiqueta(etiqueta):
+    """'2026-06' -> (2026, 6)"""
+    anio, mes = str(etiqueta).strip().split("-")
+    return int(anio), int(mes)
+
+
+def nombre_periodo(anio, mes):
+    """'JUNIO 2026' (sufijo usado en los nombres de columna)."""
+    return f"{NOMBRES_MES[int(mes) - 1]} {int(anio)}"
+
+
+def fin_periodo(anio, mes):
+    """Último instante del mes."""
+    return _fin_mes(anio, mes) + pd.Timedelta(hours=23, minutes=59, seconds=59)
+
+
+_PATRON_STOCK_MES = re.compile(r"^STOCK\s+([A-Z]+)\s+(\d{4})$")
+
+
+def meses_con_stock(df):
+    """
+    Periodos (anio, mes) que tienen columna 'STOCK <MES> <AÑO>',
+    en orden cronológico. El último es el corte del archivo.
+    """
+    encontrados = set()
+
+    for c in df.columns:
+        m = _PATRON_STOCK_MES.match(norm(c))
+        if m and m.group(1) in NOMBRES_MES:
+            encontrados.add((int(m.group(2)), NOMBRES_MES.index(m.group(1)) + 1))
+
+    return sorted(encontrados)
+
+
+def col_coste_mes(df, nombre, anio):
+    """Columna de coste (valor del inventario) de un mes."""
+    sfx = f"{nombre} {anio}"
+    return col_exacta(df, f"COSTE TOTAL {sfx}") or col_exacta(df, f"COSTE {sfx}")
 
 
 # ============================================================
@@ -178,13 +234,34 @@ def _a_float(valor):
     try:
         return float(v)
     except Exception:
-        return 0.0
+        # Texto que no es un número: se marca como NaN para que
+        # a_numero_validado pueda informarlo. a_numero lo deja en 0
+        # (comportamiento histórico para las columnas del histórico).
+        return np.nan
 
 
 def a_numero(serie):
+    """Convierte a número; vacíos y textos no numéricos quedan en 0."""
     if pd.api.types.is_numeric_dtype(serie):
         return pd.to_numeric(serie, errors="coerce").fillna(0.0).astype(float)
-    return serie.apply(_a_float).astype(float)
+    return serie.apply(_a_float).astype(float).fillna(0.0)
+
+
+def a_numero_validado(serie):
+    """
+    Igual que a_numero, pero además devuelve la máscara de celdas con
+    texto que NO es un número (p. ej. 'N/A', '12a'). Una celda vacía
+    se considera 0 y es válida: en el Kardex una fila de entrada trae
+    la salida vacía y viceversa.
+    """
+    if pd.api.types.is_numeric_dtype(serie):
+        valores = pd.to_numeric(serie, errors="coerce").astype(float)
+        return valores.fillna(0.0), pd.Series(False, index=serie.index)
+
+    convertidos = serie.apply(_a_float).astype(float)
+    vacios = serie.apply(lambda v: texto(v) == "")
+    invalidos = convertidos.isna() & ~vacios
+    return convertidos.fillna(0.0), invalidos
 
 
 def texto(valor):
@@ -320,47 +397,61 @@ def preparar_historico(df):
     df[c_bod] = df[c_bod].apply(bodega_txt)
     df[c_cod] = df[c_cod].apply(codigo)
 
-    c_stock = col_exacta(df, "STOCK MAYO 2026")
-    if c_stock is None:
+    # --------------------------------------------------------
+    # MES DE CORTE DEL ARCHIVO: el último 'STOCK <MES> <AÑO>'.
+    # (Antes estaba fijo en 'STOCK MAYO 2026'.)
+    # --------------------------------------------------------
+    meses = meses_con_stock(df)
+    if not meses:
         raise ValueError(
-            "El histórico no tiene la columna 'STOCK MAYO 2026'."
+            "El histórico no tiene columnas 'STOCK <MES> <AÑO>' "
+            "(por ejemplo 'STOCK MAYO 2026')."
         )
 
-    c_coste = None
-    for cand in [
-        "COSTE MAYO 2026",
-        "COSTE TOTAL MAYO 2026",
-        "COSTE TOTAL MAYO",
-        "COSTO TOTAL MAYO",
-        "COSTE MAYO",
-        "COSTO MAYO 2026",
-    ]:
-        c_coste = col_exacta(df, cand)
-        if c_coste:
-            break
+    anio_c, mes_c = meses[-1]
+    nombre_c = NOMBRES_MES[mes_c - 1]
+    sfx_c = f"{nombre_c} {anio_c}"
+    c_stock = col_exacta(df, f"STOCK {sfx_c}")
 
-    if c_coste is not None:
-        if c_coste != "COSTE MAYO 2026":
-            df = df.rename(columns={c_coste: "COSTE MAYO 2026"})
-        df["COSTE MAYO 2026"] = a_numero(df["COSTE MAYO 2026"])
-    else:
-        c_abr = col_exacta(df, "COSTE ABRIL 2026")
-        c_ent = col_exacta(df, "COSTO ENTRADA MAYO 2026")
-        c_sal = col_exacta(df, "COSTO SALIDA MAYO 2026")
+    # Coste del mes de corte. Si viene sin año (p. ej. 'COSTE TOTAL
+    # MAYO', como en el archivo base) se renombra a 'COSTE MAYO 2026'.
+    if col_coste_mes(df, nombre_c, anio_c) is None:
+        c_coste = None
+        for cand in [
+            f"COSTE TOTAL {nombre_c}",
+            f"COSTO TOTAL {nombre_c}",
+            f"COSTE {nombre_c}",
+            f"COSTO {sfx_c}",
+            f"COSTO TOTAL {sfx_c}",
+        ]:
+            c_coste = col_exacta(df, cand)
+            if c_coste:
+                break
 
-        if c_abr is None or c_ent is None:
-            raise ValueError(
-                "El histórico no trae el coste de mayo 2026 "
-                "y no se puede reconstruir "
-                "(faltan 'COSTE ABRIL 2026' y/o "
-                "'COSTO ENTRADA MAYO 2026')."
-            )
+        if c_coste is not None:
+            df = df.rename(columns={c_coste: f"COSTE {sfx_c}"})
+        else:
+            # Reconstrucción: coste del mes anterior + costo de
+            # entradas + costo de salidas (las salidas restan).
+            anio_p, mes_p = periodo_de_num(periodo_num(anio_c, mes_c) - 1)
+            c_prev = col_coste_mes(df, NOMBRES_MES[mes_p - 1], anio_p)
+            c_ent = col_exacta(df, f"COSTO ENTRADA {sfx_c}")
+            c_sal = col_exacta(df, f"COSTO SALIDA {sfx_c}")
 
-        coste = a_numero(df[c_abr]) + a_numero(df[c_ent])
-        if c_sal is not None:
-            coste = coste - a_numero(df[c_sal]).abs()
-        df["COSTE MAYO 2026"] = coste
+            if c_prev is None or c_ent is None:
+                raise ValueError(
+                    f"El histórico no trae el coste de {sfx_c.lower()} "
+                    "y no se puede reconstruir (falta el coste del mes "
+                    "anterior y/o el costo de entrada del mes)."
+                )
 
+            coste = a_numero(df[c_prev]) + a_numero(df[c_ent])
+            if c_sal is not None:
+                coste = coste - a_numero(df[c_sal]).abs()
+            df[f"COSTE {sfx_c}"] = coste
+
+    c_coste_final = col_coste_mes(df, nombre_c, anio_c)
+    df[c_coste_final] = a_numero(df[c_coste_final])
     df[c_stock] = a_numero(df[c_stock])
 
     df["LLAVE"] = df.apply(lambda f: crear_llave(f[c_bod], f[c_cod]), axis=1)
@@ -439,7 +530,7 @@ def leer_kardex(origen):
         )
 
     wb = openpyxl.load_workbook(
-        io.BytesIO(contenido), read_only=False, data_only=True
+        io.BytesIO(contenido), read_only=True, data_only=True
     )
     filas = list(wb[hoja_k].iter_rows(values_only=True))
     wb.close()
@@ -454,12 +545,27 @@ def leer_kardex(origen):
             nombre = f"{nombre}_{vistos[nombre]}"
         encabezados.append(nombre)
 
-    k = pd.DataFrame(filas[fila_k + 1:], columns=encabezados)
+    ancho = len(encabezados)
+    datos = [
+        (tuple(f) + (None,) * ancho)[:ancho] for f in filas[fila_k + 1:]
+    ]
+    k = pd.DataFrame(datos, columns=encabezados)
+
+    # Fila de Excel de cada movimiento (para reportar rechazos).
+    k["_FILA_ORIGEN"] = np.arange(len(k)) + fila_k + 2
+
+    columnas_datos = [c for c in k.columns if c != "_FILA_ORIGEN"]
     k = (
-        k.dropna(axis=0, how="all")
+        k.dropna(axis=0, how="all", subset=columnas_datos)
         .reset_index(drop=True)
-        .dropna(axis=1, how="all")
     )
+    vacias = [c for c in columnas_datos if k[c].isna().all()]
+    k = k.drop(columns=vacias)
+
+    if k.empty:
+        raise ValueError(
+            "El Kardex tiene encabezados pero no contiene movimientos."
+        )
 
     return k, hoja_k
 
@@ -721,9 +827,23 @@ def calcular_indicadores_12_meses(hist, meses_analisis, avisos=None):
         ),
     )
 
+    # Periodo desde el que se cuenta la permanencia.
+    # CORRECCIÓN H-03: el STOCK INICIAL es la existencia ANTERIOR al
+    # primer mes del histórico (31-may-2025 con el archivo base), así
+    # que se cuenta desde el mes previo a la primera columna. Antes se
+    # contaba desde la primera columna y una referencia sin consumo en
+    # 12 meses quedaba en "Entre 7 y 12 meses".
+    periodo_stock_inicial = periodos_num[0] - 1
+
+    periodo_primero = np.where(
+        stock_existia,
+        periodo_stock_inicial,
+        periodos_num[np.clip(primer_idx, 0, None)],
+    )
+
     meses_desde = np.where(
         primer_idx >= 0,
-        ultimo_num - periodos_num[np.clip(primer_idx, 0, None)] + 1,
+        ultimo_num - periodo_primero + 1,
         0,
     )
 
@@ -795,26 +915,40 @@ def calcular_indicadores_12_meses(hist, meses_analisis, avisos=None):
     nombres_ventana = [
         f"{m['nombre']} {m['anio']}" for m in meses_info[inicio_12:]
     ]
-    etiqueta_periodo = f"{nombres_ventana[0]} a {nombres_ventana[-1]}"
+    texto_periodo = f"{nombres_ventana[0]} a {nombres_ventana[-1]}"
 
-    etiquetas_mes = np.array(
-        [f"{p['anio']}-{p['mes']:02d}" for p in todos], dtype=object
+    etiqueta_primer_stock = np.array(
+        [
+            etiqueta_periodo(*periodo_de_num(p)) if p > 0 else None
+            for p in periodo_primero
+        ],
+        dtype=object,
     )
 
-    hist["INVENTARIO PROMEDIO 12 MESES"] = inventario_promedio
-    hist["CMV 12 MESES"] = cmv
-    hist["ROTACION 12 MESES"] = rotacion
-    hist["DIAS ROTACION 12 MESES"] = dias_rotacion
-    hist["MESES VALIDOS INVENTARIO"] = divisor
-    hist["DIAS DEL PERIODO"] = dias_periodo
-    hist["PRIMER MES CON STOCK"] = np.where(
-        tiene_primer_stock,
-        etiquetas_mes[np.clip(primer_idx, 0, None)],
-        None,
+    # Se agregan todas las columnas juntas (evita la fragmentación
+    # del DataFrame que pandas advertía columna por columna).
+    nuevas = {
+        "INVENTARIO PROMEDIO 12 MESES": inventario_promedio,
+        "CMV 12 MESES": cmv,
+        "ROTACION 12 MESES": rotacion,
+        "DIAS ROTACION 12 MESES": dias_rotacion,
+        "MESES VALIDOS INVENTARIO": divisor,
+        "DIAS DEL PERIODO": dias_periodo,
+        "PRIMER MES CON STOCK": np.where(
+            tiene_primer_stock, etiqueta_primer_stock, None
+        ),
+        "MESES DESDE PRIMER STOCK": np.where(tiene_primer_stock, meses_desde, 0),
+        "PERIODO ANALISIS INVENTARIO": texto_periodo,
+        COL_ANTIGUEDAD_SALIDA: antiguedad,
+    }
+
+    hist = pd.concat(
+        [
+            hist.drop(columns=[c for c in nuevas if c in hist.columns]),
+            pd.DataFrame(nuevas, index=hist.index),
+        ],
+        axis=1,
     )
-    hist["MESES DESDE PRIMER STOCK"] = np.where(tiene_primer_stock, meses_desde, 0)
-    hist["PERIODO ANALISIS INVENTARIO"] = etiqueta_periodo
-    hist[COL_ANTIGUEDAD_SALIDA] = antiguedad
 
     # --------------------------------------------------------
     # CONTROL
@@ -836,7 +970,7 @@ def calcular_indicadores_12_meses(hist, meses_analisis, avisos=None):
     )
 
     info_periodo = {
-        "periodo": etiqueta_periodo,
+        "periodo": texto_periodo,
         "cantidad_meses": len(nombres_ventana),
         "meses": nombres_ventana,
         "mes_inicial": nombres_ventana[0],
@@ -847,52 +981,310 @@ def calcular_indicadores_12_meses(hist, meses_analisis, avisos=None):
 
 
 # ============================================================
+# NORMALIZACIÓN Y VALIDACIÓN DEL KARDEX
+# ============================================================
+
+# Columnas estándar con las que el motor trabaja internamente y con
+# las que se guardan los movimientos de cada periodo cargado.
+COLUMNAS_MOVIMIENTO = [
+    "Fecha Movimiento",
+    "Bodega",
+    "Codigo Articulo",
+    "Articulo",
+    "EstadoMovimiento",
+    "Cantidad Entrada",
+    "Cantidad Salida",
+    "Costo Total Con Iva",
+]
+
+# Convención de signo de la columna de salidas en el archivo fuente.
+CONVENCION_NEGATIVA = "negativa"   # salidas registradas como -15
+CONVENCION_POSITIVA = "positiva"   # salidas registradas como 15
+
+MOTIVO_SIGNO_OPUESTO = (
+    "Salida con signo opuesto a la convención del archivo "
+    "(posible reversión). No se aplicó: revisar."
+)
+MOTIVO_ENTRADA_NEGATIVA = (
+    "Entrada con signo negativo: se aplicó como salida, "
+    "respetando su signo."
+)
+MOTIVO_FILA_MIXTA = (
+    "Fila con entrada y salida a la vez: el costo se repartió "
+    "en proporción a las cantidades."
+)
+MOTIVO_DUPLICADO = "Posible duplicado: fila idéntica a otra del Kardex."
+MOTIVO_SIN_COSTO = "Entrada sin costo: el inventario no aumenta de valor."
+
+
+_PATRON_FECHA_ISO = re.compile(r"^\s*\d{4}-\d{1,2}-\d{1,2}")
+
+
+def _a_fecha(valor):
+    """
+    Convierte una celda de fecha. Las fechas de Excel llegan como
+    datetime; los textos 'AAAA-MM-DD' se leen como ISO y el resto con
+    día primero (formato colombiano 15/06/2026).
+    """
+    if valor is None or (not isinstance(valor, str) and pd.isna(valor)):
+        return pd.NaT
+
+    if isinstance(valor, (pd.Timestamp, np.datetime64)) or hasattr(valor, "year"):
+        return pd.to_datetime(valor, errors="coerce")
+
+    t = str(valor).strip()
+    if t == "":
+        return pd.NaT
+
+    if _PATRON_FECHA_ISO.match(t):
+        return pd.to_datetime(t, errors="coerce", dayfirst=False)
+
+    return pd.to_datetime(t, errors="coerce", dayfirst=True)
+
+
+def convertir_fechas(serie):
+    if pd.api.types.is_datetime64_any_dtype(serie):
+        return pd.to_datetime(serie, errors="coerce")
+    return serie.apply(_a_fecha).astype("datetime64[ns]")
+
+
+def detectar_convencion_salidas(salidas):
+    """
+    Determina cómo registra el archivo las salidas: mayoritariamente
+    negativas (-15) o positivas (15). Sin salidas -> negativa.
+    """
+    no_cero = salidas[salidas.abs() > EPS]
+    if len(no_cero) == 0:
+        return CONVENCION_NEGATIVA
+    negativas = int((no_cero < 0).sum())
+    positivas = int((no_cero > 0).sum())
+    return CONVENCION_NEGATIVA if negativas >= positivas else CONVENCION_POSITIVA
+
+
+def _col_articulo(df, col_codigo):
+    """'Articulo' exacto; si no, una columna que lo contenga y no sea el código."""
+    c = col_exacta(df, "Articulo")
+    if c is not None:
+        return c
+    for c in df.columns:
+        if c != col_codigo and "ARTICULO" in norm(c) and "COD" not in norm(c):
+            return c
+    return None
+
+
+def normalizar_kardex(kardex):
+    """
+    Lleva el Kardex (crudo o ya guardado) a las columnas estándar y
+    valida cada fila SIN alterar los valores originales:
+
+      * Las cantidades conservan su signo tal como vienen.
+      * '_CONVENCION' indica si el archivo registra las salidas en
+        negativo o en positivo (se detecta por archivo).
+      * '_MOTIVO_RECHAZO' no vacío = la fila no se puede procesar
+        (fecha inválida, cantidad o costo no numérico, sin código...).
+    """
+    k = kardex.copy()
+
+    k_bod = col_buscar(k, ["Bodega"])
+    k_cod = col_buscar(k, ["Codigo Articulo"])
+    k_est = col_buscar(k, ["EstadoMovimiento", "Estado Movimiento"], obligatoria=False)
+    k_art = _col_articulo(k, k_cod)
+    k_fec = col_buscar(k, ["Fecha Movimiento"])
+    k_ent = col_buscar(k, ["Cantidad Entrada"])
+    k_sal = col_buscar(k, ["Cantidad Salida"])
+    k_cos = col_buscar(k, ["Costo Total Con Iva"])
+
+    out = pd.DataFrame(index=k.index)
+    out["Fecha Movimiento"] = convertir_fechas(k[k_fec])
+    out["Bodega"] = k[k_bod].apply(bodega_txt)
+    out["Codigo Articulo"] = k[k_cod].apply(codigo)
+    out["Articulo"] = k[k_art].apply(texto) if k_art is not None else ""
+    out["EstadoMovimiento"] = k[k_est].apply(texto) if k_est is not None else ""
+
+    ent, ent_inv = a_numero_validado(k[k_ent])
+    sal, sal_inv = a_numero_validado(k[k_sal])
+    cos, cos_inv = a_numero_validado(k[k_cos])
+
+    out["Cantidad Entrada"] = ent
+    out["Cantidad Salida"] = sal
+    out["Costo Total Con Iva"] = cos
+
+    out["_FILA_ORIGEN"] = (
+        k["_FILA_ORIGEN"].values if "_FILA_ORIGEN" in k.columns
+        else np.arange(len(k)) + 2
+    )
+
+    motivos = [
+        (out["Fecha Movimiento"].isna(), "Fecha inválida o vacía"),
+        (out["Bodega"] == "", "Sin bodega"),
+        (out["Codigo Articulo"] == "", "Sin código de artículo"),
+        (ent_inv, "Cantidad de entrada no numérica"),
+        (sal_inv, "Cantidad de salida no numérica"),
+        (cos_inv, "Costo no numérico"),
+    ]
+
+    motivo = pd.Series("", index=out.index, dtype=object)
+    for mascara, texto_motivo in motivos:
+        mascara = mascara.fillna(False).astype(bool)
+        motivo = np.where(
+            mascara,
+            np.where(motivo == "", texto_motivo, motivo + "; " + texto_motivo),
+            motivo,
+        )
+        motivo = pd.Series(motivo, index=out.index, dtype=object)
+    out["_MOTIVO_RECHAZO"] = motivo
+
+    # Convención de signo: la del archivo guardado (si existe) o la
+    # detectada con las salidas válidas de este archivo.
+    c_conv = col_exacta(k, "_CONVENCION")
+    if c_conv is not None:
+        out["_CONVENCION"] = k[c_conv].astype(str).str.strip().str.lower().values
+    else:
+        validas = out["_MOTIVO_RECHAZO"] == ""
+        out["_CONVENCION"] = detectar_convencion_salidas(sal[validas])
+
+    return out
+
+
+def _tabla_motivo(df, motivo, columnas_extra=()):
+    """Filas de control con el motivo indicado."""
+    cols = ["_FILA_ORIGEN"] + COLUMNAS_MOVIMIENTO + [
+        c for c in columnas_extra if c in df.columns
+    ]
+    t = df[[c for c in cols if c in df.columns]].copy()
+    t = t.rename(columns={"_FILA_ORIGEN": "Fila en el archivo"})
+    t["Motivo"] = motivo if isinstance(motivo, str) else motivo.values
+    return t
+
+
+# ============================================================
 # MOTOR PRINCIPAL
 # ============================================================
 
-def procesar_inventario(historico, kardex, mes_final=9):
+def _resolver_periodo_final(periodo_final, num_base, fechas_validas):
     """
-    historico: DataFrame ya preparado.
-    kardex   : DataFrame crudo del Kardex detallado.
-    mes_final: último mes de 2026 a calcular.
+    periodo_final admite:
+      * None      -> último mes con movimientos posteriores a la base.
+      * 'AAAA-MM' o (anio, mes).
+      * int (compatibilidad): número de mes; se toma la primera
+        ocurrencia de ese mes posterior a la base.
+    """
+    if periodo_final is None:
+        posteriores = fechas_validas[
+            fechas_validas >= pd.Timestamp(*periodo_de_num(num_base + 1), 1)
+        ]
+        if len(posteriores) == 0:
+            return None
+        f = posteriores.max()
+        return periodo_num(f.year, f.month)
 
-    La unidad de consolidación es LLAVE = número de bodega + código
-    de artículo, por lo que cada bodega conserva sus propios
-    movimientos, existencias, costos e indicadores.
+    if isinstance(periodo_final, str):
+        return periodo_num(*periodo_de_etiqueta(periodo_final))
 
-    Siempre se parte del histórico base (stock y coste de mayo 2026) y
-    se recalculan los meses jun-2026 ... mes_final: cargar dos veces el
-    mismo Kardex da el mismo resultado (no acumula).
+    if isinstance(periodo_final, (tuple, list)):
+        return periodo_num(*periodo_final)
+
+    mes = int(periodo_final)
+    anio_base, mes_base = periodo_de_num(num_base)
+    anio = anio_base if mes > mes_base else anio_base + 1
+    return periodo_num(anio, mes)
+
+
+def procesar_inventario(
+    historico,
+    kardex,
+    periodo_final=None,
+    excluir_filas_identicas=False,
+):
+    """
+    historico : DataFrame preparado (leer_historico). Su último mes con
+                'STOCK <MES> <AÑO>' es la BASE (mayo 2026 en el archivo
+                inicial).
+    kardex    : movimientos de TODOS los meses posteriores a la base que
+                se quieren calcular (crudo o ya normalizado). La gestión
+                de cargues mensuales (gestion_kardex.py) une aquí los
+                periodos guardados, de modo que cada mes parte del
+                cierre del mes anterior.
+    periodo_final : último periodo a calcular (ver _resolver_periodo_final).
+
+    La unidad de consolidación es LLAVE = número de bodega + código de
+    artículo: cada bodega conserva sus propios movimientos, existencias,
+    costos e indicadores.
+
+    Siempre se parte del histórico base y se recalculan todos los meses
+    posteriores con los movimientos recibidos: procesar dos veces los
+    mismos movimientos da el mismo resultado (no acumula).
+
+    Signos: las cantidades se respetan como vienen. Con la convención
+    negativa (-15) la salida se suma tal cual: stock = inicial +
+    entradas + salidas. Con la convención positiva (15) la salida se
+    resta. Una salida con el signo contrario a la convención del
+    archivo NO se aplica y queda para revisión.
     """
 
     avisos = []
 
-    meses = [(NOMBRES_MES[m - 1], m) for m in range(6, mes_final + 1)]
-
-    fecha_inicio = pd.Timestamp(ANIO, 6, 1)
-    fecha_fin = _fin_mes(ANIO, mes_final) + pd.Timedelta(
-        hours=23, minutes=59, seconds=59
-    )
-
     hist = historico.copy()
+
+    # ========================================================
+    # BASE: último mes del histórico
+    # ========================================================
+
+    meses_archivo = meses_con_stock(hist)
+    if not meses_archivo:
+        raise ValueError(
+            "El histórico no tiene columnas 'STOCK <MES> <AÑO>'."
+        )
+
+    anio_base, mes_base = meses_archivo[-1]
+    num_base = periodo_num(anio_base, mes_base)
+    nombre_base = nombre_periodo(anio_base, mes_base)
 
     c_bod = col_buscar(hist, ["Bodega"])
     c_cod = col_buscar(hist, ["Codigo Articulo"])
-    c_art = col_buscar(hist, ["Articulo"], obligatoria=False)
+    c_art = col_exacta(hist, "Articulo")
 
-    c_stock_mayo = col_exacta(hist, "STOCK MAYO 2026")
-    c_coste_mayo = "COSTE MAYO 2026"
+    c_stock_base = col_exacta(hist, f"STOCK {nombre_base}")
+    c_coste_base = col_coste_mes(hist, NOMBRES_MES[mes_base - 1], anio_base)
+
+    if c_coste_base is None:
+        raise ValueError(
+            f"El histórico no trae el coste de {nombre_base.lower()}."
+        )
+
     c_stock_ini = col_exacta(hist, "STOCK INICIAL")
     c_coste_ini = col_exacta(hist, "COSTE INICIAL")
 
+    if "LLAVE" not in hist.columns:
+        hist["LLAVE"] = [
+            crear_llave(b, c) for b, c in zip(hist[c_bod], hist[c_cod])
+        ]
+
+    if col_exacta(hist, "OBSERVACION") is None:
+        hist["OBSERVACION"] = ""
+
     # ========================================================
-    # COLUMNAS MENSUALES DEL HISTÓRICO
+    # COLUMNAS MENSUALES DEL HISTÓRICO (hasta la base)
     # ========================================================
 
-    cols_h = {}
+    meses_hist = [
+        p for p in obtener_meses_disponibles(hist)
+        if periodo_num(p["anio"], p["mes"]) <= num_base
+    ]
+
+    if meses_hist:
+        anio_ini, mes_ini = periodo_de_num(
+            periodo_num(meses_hist[0]["anio"], meses_hist[0]["mes"]) - 1
+        )
+        fecha_stock_inicial = _fin_mes(anio_ini, mes_ini)
+    else:
+        fecha_stock_inicial = FECHA_STOCK_INICIAL
+
+    cols_h = []
     faltan = 0
 
-    for nombre, _ in MESES_HISTORICO:
+    for p in meses_hist:
+        nombre = f"{p['nombre']} {p['anio']}"
         cols = {
             "entrada": col_exacta(hist, f"ENTRADA {nombre}"),
             "salida": col_exacta(hist, f"SALIDA {nombre}"),
@@ -900,7 +1292,7 @@ def procesar_inventario(historico, kardex, mes_final=9):
             "costo_entrada": col_exacta(hist, f"COSTO ENTRADA {nombre}"),
         }
         faltan += sum(1 for v in cols.values() if v is None)
-        cols_h[nombre] = cols
+        cols_h.append((nombre, p["fecha"], cols))
 
     if faltan:
         avisos.append(
@@ -908,21 +1300,21 @@ def procesar_inventario(historico, kardex, mes_final=9):
             "no existen (se toman como 0)."
         )
 
-    num_cols = {c_stock_mayo, c_coste_mayo, c_stock_ini, c_coste_ini}
-    for cols in cols_h.values():
+    num_cols = {c_stock_base, c_coste_base, c_stock_ini, c_coste_ini}
+    for _, _, cols in cols_h:
         num_cols.update(cols.values())
 
     for c in [x for x in num_cols if x is not None]:
         hist[c] = a_numero(hist[c])
 
     # ========================================================
-    # DUPLICADOS
+    # DUPLICADOS DEL HISTÓRICO
     # ========================================================
 
     duplicados = hist[hist["LLAVE"].duplicated(keep=False)]
 
     df_duplicados = duplicados[
-        ["LLAVE", c_bod, c_cod, c_stock_mayo, c_coste_mayo]
+        ["LLAVE", c_bod, c_cod, c_stock_base, c_coste_base]
     ].copy()
 
     if len(duplicados):
@@ -933,61 +1325,161 @@ def procesar_inventario(historico, kardex, mes_final=9):
         )
 
     # ========================================================
-    # KARDEX
+    # KARDEX: NORMALIZACIÓN Y VALIDACIÓN
     # ========================================================
 
-    k = kardex.copy()
+    kn = normalizar_kardex(kardex)
 
-    k_bod = col_buscar(k, ["Bodega"])
-    k_cod = col_buscar(k, ["Codigo Articulo"])
-    k_est = col_buscar(k, ["EstadoMovimiento", "Estado Movimiento"])
-    k_art = col_buscar(k, ["Articulo"], obligatoria=False)
-    k_fec = col_buscar(k, ["Fecha Movimiento"])
-    k_ent = col_buscar(k, ["Cantidad Entrada"])
-    k_sal = col_buscar(k, ["Cantidad Salida"])
-    k_cos = col_buscar(k, ["Costo Total Con Iva"])
+    stats = {"filas_kardex": len(kn)}
+    revision = []
 
-    k[k_bod] = k[k_bod].apply(bodega_txt)
-    k[k_cod] = k[k_cod].apply(codigo)
-
-    if pd.api.types.is_datetime64_any_dtype(k[k_fec]):
-        k[k_fec] = pd.to_datetime(k[k_fec], errors="coerce")
-    else:
-        k[k_fec] = pd.to_datetime(k[k_fec], errors="coerce", dayfirst=True)
-
-    for c in (k_ent, k_sal, k_cos):
-        k[c] = a_numero(k[c])
-
-    stats = {"filas_kardex": len(k)}
-
-    if len(k) == 15000:
+    if len(kn) == 15000:
         avisos.append(
             "El Kardex trae exactamente 15.000 filas: "
             "la exportación podría estar truncada en origen."
         )
 
-    df_fechas_invalidas = k[k[k_fec].isna()].copy()
+    rechazo = kn["_MOTIVO_RECHAZO"] != ""
+    df_rechazados = _tabla_motivo(kn[rechazo], kn.loc[rechazo, "_MOTIVO_RECHAZO"])
+    df_fechas_invalidas = kn[kn["Fecha Movimiento"].isna()].copy()
+
+    stats["rechazados"] = int(rechazo.sum())
     stats["fechas_invalidas"] = len(df_fechas_invalidas)
 
-    if stats["fechas_invalidas"]:
+    if stats["rechazados"]:
         avisos.append(
-            f"{stats['fechas_invalidas']} movimientos "
-            "sin fecha válida (no se procesan)."
+            f"{stats['rechazados']} movimientos rechazados por datos "
+            "inválidos (fecha, cantidad, costo, código o bodega). "
+            "No se procesan; ver 'Movimientos rechazados'."
         )
 
-    k["_NUM_BODEGA"] = k[k_bod].apply(numero_bodega)
+    k = kn[~rechazo].copy()
+
+    # Posibles duplicados: filas idénticas en todas las columnas.
+    # No se eliminan salvo decisión explícita del usuario.
+    dup = k.duplicated(subset=COLUMNAS_MOVIMIENTO, keep=False)
+    stats["posibles_duplicados"] = int(dup.sum())
+
+    if stats["posibles_duplicados"]:
+        revision.append(
+            _tabla_motivo(
+                k[dup],
+                MOTIVO_DUPLICADO
+                + (
+                    " Se conservó solo la primera."
+                    if excluir_filas_identicas
+                    else " Se procesaron todas."
+                ),
+            )
+        )
+
+    if excluir_filas_identicas:
+        n0 = len(k)
+        k = k[~k.duplicated(subset=COLUMNAS_MOVIMIENTO, keep="first")].copy()
+        stats["duplicados_excluidos"] = n0 - len(k)
+    else:
+        stats["duplicados_excluidos"] = 0
+
+    k["_NUM_BODEGA"] = k["Bodega"].apply(numero_bodega)
 
     n0 = len(k)
     k = k[~k["_NUM_BODEGA"].isin(BODEGAS_EXCLUIDAS)].copy()
     stats["excluidos_bodega"] = n0 - len(k)
 
-    anulado = k[k_est].astype(str).str.upper().str.contains("ANULADO", na=False)
+    anulado = k["EstadoMovimiento"].astype(str).str.upper().str.contains(
+        "ANULADO", na=False
+    )
     stats["anulados"] = int(anulado.sum())
     k = k[~anulado].copy()
 
-    k["LLAVE"] = k.apply(lambda f: crear_llave(f[k_bod], f[k_cod]), axis=1)
+    k["LLAVE"] = k["_NUM_BODEGA"] + "_" + k["Codigo Articulo"]
 
-    kp = k[(k[k_fec] >= fecha_inicio) & (k[k_fec] <= fecha_fin)].copy()
+    # --------------------------------------------------------
+    # SIGNOS
+    # --------------------------------------------------------
+    ent = k["Cantidad Entrada"]
+    sal = k["Cantidad Salida"]
+    conv = k["_CONVENCION"]
+
+    opuesto = (
+        ((conv == CONVENCION_NEGATIVA) & (sal > EPS))
+        | ((conv == CONVENCION_POSITIVA) & (sal < -EPS))
+    )
+
+    stats["salidas_signo_opuesto"] = int(opuesto.sum())
+    stats["salidas_positivas"] = stats["salidas_signo_opuesto"]
+
+    if stats["salidas_signo_opuesto"]:
+        revision.append(_tabla_motivo(k[opuesto], MOTIVO_SIGNO_OPUESTO))
+        avisos.append(
+            f"{stats['salidas_signo_opuesto']} salidas tienen el signo "
+            "contrario al resto del archivo y no se aplicaron "
+            "(ver 'Movimientos para revisión')."
+        )
+
+    k = k[~opuesto].copy()
+
+    stats["entradas_negativas"] = int((k["Cantidad Entrada"] < 0).sum())
+    if stats["entradas_negativas"]:
+        revision.append(
+            _tabla_motivo(k[k["Cantidad Entrada"] < 0], MOTIVO_ENTRADA_NEGATIVA)
+        )
+
+    conv_valores = k["_CONVENCION"].value_counts()
+    stats["convencion_salidas"] = (
+        conv_valores.index[0] if len(conv_valores) else CONVENCION_NEGATIVA
+    )
+
+    # --------------------------------------------------------
+    # PERIODO A CALCULAR
+    # --------------------------------------------------------
+    num_fin = _resolver_periodo_final(
+        periodo_final, num_base, k["Fecha Movimiento"]
+    )
+
+    anio_ini_k, mes_ini_k = periodo_de_num(num_base + 1)
+    fecha_inicio = pd.Timestamp(anio_ini_k, mes_ini_k, 1)
+
+    if num_fin is None:
+        raise ValueError(
+            f"El Kardex no tiene movimientos válidos posteriores a "
+            f"{nombre_base.lower()} (base del histórico)."
+        )
+
+    if num_fin <= num_base:
+        raise ValueError(
+            f"El periodo a calcular debe ser posterior a "
+            f"{nombre_base.lower()} (base del histórico)."
+        )
+
+    anio_fin, mes_fin = periodo_de_num(num_fin)
+    fecha_fin = fin_periodo(anio_fin, mes_fin)
+
+    meses = [
+        (NOMBRES_MES[m - 1], a, m)
+        for a, m in (periodo_de_num(n) for n in range(num_base + 1, num_fin + 1))
+    ]
+
+    stats["anteriores_a_base"] = int((k["Fecha Movimiento"] < fecha_inicio).sum())
+    stats["posteriores_al_periodo"] = int((k["Fecha Movimiento"] > fecha_fin).sum())
+
+    if stats["anteriores_a_base"]:
+        avisos.append(
+            f"{stats['anteriores_a_base']} movimientos son anteriores a "
+            f"{fecha_inicio:%d/%m/%Y} (ya incluidos en el histórico base) "
+            "y no se procesan."
+        )
+
+    if stats["posteriores_al_periodo"]:
+        avisos.append(
+            f"{stats['posteriores_al_periodo']} movimientos son "
+            f"posteriores a {fecha_fin:%d/%m/%Y} y no se procesan."
+        )
+
+    kp = k[
+        (k["Fecha Movimiento"] >= fecha_inicio)
+        & (k["Fecha Movimiento"] <= fecha_fin)
+    ].copy()
     stats["movimientos_periodo"] = len(kp)
 
     if len(kp) == 0:
@@ -996,17 +1488,32 @@ def procesar_inventario(historico, kardex, mes_final=9):
             f"{fecha_inicio:%d/%m/%Y} y {fecha_fin:%d/%m/%Y}."
         )
 
-    stats["fecha_min"] = kp[k_fec].min()
-    stats["fecha_max"] = kp[k_fec].max()
+    stats["fecha_min"] = kp["Fecha Movimiento"].min()
+    stats["fecha_max"] = kp["Fecha Movimiento"].max()
 
-    ent = kp[k_ent]
-    sal = kp[k_sal]
+    ent = kp["Cantidad Entrada"]
+    sal = kp["Cantidad Salida"]
 
-    stats["entradas_negativas"] = int((ent < 0).sum())
-    stats["salidas_positivas"] = int((sal > 0).sum())
-
+    # Entradas positivas suman. La salida se expresa SIEMPRE en
+    # negativo para el cálculo, respetando el signo original:
+    #   convención negativa: -15 se usa tal cual (nunca se resta dos veces)
+    #   convención positiva:  15 se convierte en -15
+    # Una entrada negativa se aplica como salida con su propio signo.
+    salida_signo = np.where(
+        kp["_CONVENCION"] == CONVENCION_POSITIVA, -sal, sal
+    )
     kp["ENT"] = ent.clip(lower=0.0)
-    kp["SAL"] = -sal.abs() + ent.where(ent < 0, 0.0)
+    kp["SAL"] = salida_signo + ent.where(ent < 0, 0.0)
+
+    mixtas = (kp["ENT"] > 0) & (kp["SAL"] < 0)
+    stats["filas_mixtas"] = int(mixtas.sum())
+    if stats["filas_mixtas"]:
+        revision.append(_tabla_motivo(kp[mixtas], MOTIVO_FILA_MIXTA))
+
+    sin_costo = (kp["ENT"] > 0) & (kp["Costo Total Con Iva"].abs() <= EPS)
+    stats["entradas_sin_costo"] = int(sin_costo.sum())
+    if stats["entradas_sin_costo"]:
+        revision.append(_tabla_motivo(kp[sin_costo], MOTIVO_SIN_COSTO))
 
     # ========================================================
     # LLAVES NUEVAS (referencia o bodega que aparecen por 1ª vez)
@@ -1017,7 +1524,9 @@ def procesar_inventario(historico, kardex, mes_final=9):
 
     if nuevas:
         primeras = (
-            kp.sort_values(k_fec).drop_duplicates("LLAVE").set_index("LLAVE")
+            kp.sort_values("Fecha Movimiento")
+            .drop_duplicates("LLAVE")
+            .set_index("LLAVE")
         )
 
         filas = []
@@ -1027,11 +1536,11 @@ def procesar_inventario(historico, kardex, mes_final=9):
 
             nueva = {c: np.nan for c in hist.columns}
             nueva["LLAVE"] = llave
-            nueva[c_bod] = p[k_bod]
-            nueva[c_cod] = p[k_cod]
+            nueva[c_bod] = p["Bodega"]
+            nueva[c_cod] = p["Codigo Articulo"]
 
-            if c_art is not None and k_art is not None:
-                nueva[c_art] = p[k_art]
+            if c_art is not None:
+                nueva[c_art] = p["Articulo"]
 
             nueva["OBSERVACION"] = MARCA_NUEVO
             filas.append(nueva)
@@ -1045,12 +1554,12 @@ def procesar_inventario(historico, kardex, mes_final=9):
             hist[c] = a_numero(hist[c])
 
     # ========================================================
-    # BASE MAYO 2026
+    # BASE (cierre del mes base)
     # ========================================================
 
     base = defaultdict(lambda: {"stock": 0.0, "costo": 0.0})
 
-    for ll, s, c in zip(hist["LLAVE"], hist[c_stock_mayo], hist[c_coste_mayo]):
+    for ll, s, c in zip(hist["LLAVE"], hist[c_stock_base], hist[c_coste_base]):
         base[ll]["stock"] += float(s)
         base[ll]["costo"] += float(c)
 
@@ -1070,24 +1579,20 @@ def procesar_inventario(historico, kardex, mes_final=9):
         ll = fila["LLAVE"]
         lotes = lotes_lifo[ll]
 
-        # STOCK INICIAL
         s_ini = val(fila, c_stock_ini)
         c_ini = val(fila, c_coste_ini)
 
         if s_ini > 0:
             lotes.append(
                 {
-                    "fecha": FECHA_STOCK_INICIAL,
+                    "fecha": fecha_stock_inicial,
                     "cantidad": s_ini,
                     "costo_unitario": c_ini / s_ini,
                     "origen": "STOCK INICIAL",
                 }
             )
 
-        # ENTRADAS Y SALIDAS HISTÓRICAS (JUNIO 2025 - MAYO 2026)
-        for nombre, fecha_mes in MESES_HISTORICO:
-            cols = cols_h[nombre]
-
+        for nombre, fecha_mes, cols in cols_h:
             e = val(fila, cols["entrada"])
             s = abs(val(fila, cols["salida"]))
             ce = val(fila, cols["costo_entrada"])
@@ -1116,8 +1621,10 @@ def procesar_inventario(historico, kardex, mes_final=9):
                     )
 
     # ========================================================
-    # CUADRAR LOTES CONTRA STOCK MAYO
+    # CUADRAR LOTES CONTRA EL STOCK BASE
     # ========================================================
+
+    etiqueta_ajuste = f"AJUSTE A {nombre_base}"
 
     for ll, b in base.items():
         lotes = lotes_lifo[ll]
@@ -1128,7 +1635,7 @@ def procesar_inventario(historico, kardex, mes_final=9):
             ctrl_hist.append(
                 {
                     "LLAVE": ll,
-                    "MES": "AJUSTE A MAYO 2026",
+                    "MES": etiqueta_ajuste,
                     "TIPO": "LOTES EN EXCESO (consumidos LIFO)",
                     "CANTIDAD": dif,
                 }
@@ -1143,13 +1650,13 @@ def procesar_inventario(historico, kardex, mes_final=9):
                     "costo_unitario": (
                         b["costo"] / b["stock"] if b["stock"] > 0 else 0.0
                     ),
-                    "origen": "SIN TRAZABILIDAD (AJUSTE A MAYO 2026)",
+                    "origen": f"SIN TRAZABILIDAD ({etiqueta_ajuste})",
                 },
             )
             ctrl_hist.append(
                 {
                     "LLAVE": ll,
-                    "MES": "AJUSTE A MAYO 2026",
+                    "MES": etiqueta_ajuste,
                     "TIPO": "STOCK SIN LOTES (sin trazabilidad)",
                     "CANTIDAD": -dif,
                 }
@@ -1163,37 +1670,41 @@ def procesar_inventario(historico, kardex, mes_final=9):
     costo_actual = {ll: b["costo"] for ll, b in base.items()}
 
     # ========================================================
-    # CIERRES MENSUALES
-    # ========================================================
-
-    pendientes = [
-        (
-            n,
-            _fin_mes(ANIO, m) + pd.Timedelta(hours=23, minutes=59, seconds=59),
-        )
-        for n, m in meses
-    ]
-
-    # ========================================================
-    # PROCESAR MOVIMIENTOS
+    # PROCESAR MOVIMIENTOS (orden cronológico; el mismo día las
+    # entradas puras van antes que las salidas)
     # ========================================================
 
     kp["_ORD"] = np.where((kp["ENT"] > 0) & (kp["SAL"] == 0), 0, 1)
     kp["_SEQ"] = np.arange(len(kp))
 
-    kp = kp.sort_values([k_fec, "_ORD", "_SEQ"]).reset_index(drop=True)
+    kp = kp.sort_values(["Fecha Movimiento", "_ORD", "_SEQ"]).reset_index(drop=True)
 
     movs = []
     sin_ex = []
     lifo = []
+    ajustes = []
 
-    for _, f in kp.iterrows():
-        ll = f["LLAVE"]
-        fecha = f[k_fec]
+    i_fec = kp.columns.get_loc("Fecha Movimiento")
+    i_bod = kp.columns.get_loc("Bodega")
+    i_cod = kp.columns.get_loc("Codigo Articulo")
+    i_art = kp.columns.get_loc("Articulo")
+    i_ent_k = kp.columns.get_loc("Cantidad Entrada")
+    i_sal_k = kp.columns.get_loc("Cantidad Salida")
+    i_cos = kp.columns.get_loc("Costo Total Con Iva")
+    i_ll = kp.columns.get_loc("LLAVE")
+    i_ent = kp.columns.get_loc("ENT")
+    i_sal = kp.columns.get_loc("SAL")
 
-        ent_ = float(f["ENT"])
-        sal_ = float(f["SAL"])
-        costo_k = float(f[k_cos])
+    for f in kp.itertuples(index=False, name=None):
+        ll = f[i_ll]
+        fecha = f[i_fec]
+
+        ent_ = float(f[i_ent])
+        sal_ = float(f[i_sal])
+        costo_k = float(f[i_cos])
+        bodega_ = f[i_bod]
+        cod_ = f[i_cod]
+        art = f[i_art]
 
         stock_actual.setdefault(ll, 0.0)
         costo_actual.setdefault(ll, 0.0)
@@ -1209,23 +1720,34 @@ def procesar_inventario(historico, kardex, mes_final=9):
         c_ent = 0.0
         c_sal = 0.0
 
-        art = f[k_art] if k_art is not None else ""
+        # Fila mixta (entrada y salida en la misma fila): el costo de
+        # la fila se reparte en proporción a las cantidades para no
+        # aplicarlo dos veces (corrección H-05).
+        if ent_ > 0 and sal_ < 0:
+            total = ent_ + abs(sal_)
+            costo_ent_fila = abs(costo_k) * ent_ / total
+            costo_sal_fila = abs(costo_k) * abs(sal_) / total
+        else:
+            costo_ent_fila = abs(costo_k)
+            costo_sal_fila = abs(costo_k)
 
         # ENTRADA
         if ent_ > 0:
             e_apl = ent_
-            c_ent = abs(costo_k)
+            c_ent = costo_ent_fila
 
             lotes.append(
                 {
                     "fecha": fecha,
                     "cantidad": ent_,
-                    "costo_unitario": abs(costo_k) / ent_,
+                    "costo_unitario": costo_ent_fila / ent_,
                     "origen": "KARDEX",
                 }
             )
 
-        # SALIDA
+        # SALIDA (regla vigente: lo que supera el stock no se descuenta
+        # y queda como 'salida sin existencia'; nunca se vuelve entrada
+        # ni deja stock negativo)
         if sal_ < 0:
             sol = abs(sal_)
             disp = max(s_antes + e_apl, 0.0)
@@ -1236,8 +1758,8 @@ def procesar_inventario(historico, kardex, mes_final=9):
                 sin_ex.append(
                     {
                         "Fecha": fecha,
-                        "Bodega": f[k_bod],
-                        "Codigo Articulo": f[k_cod],
+                        "Bodega": bodega_,
+                        "Codigo Articulo": cod_,
                         "Articulo": art,
                         "LLAVE": ll,
                         "Stock antes": s_antes,
@@ -1250,7 +1772,7 @@ def procesar_inventario(historico, kardex, mes_final=9):
                     }
                 )
 
-            c_sal = -abs(costo_k) * (s_apl / sol if sol else 0.0)
+            c_sal = -costo_sal_fila * (s_apl / sol if sol else 0.0)
 
             consumos, _ = consumir_lifo(lotes, s_apl)
 
@@ -1259,8 +1781,8 @@ def procesar_inventario(historico, kardex, mes_final=9):
                     {
                         "Fecha": fecha,
                         "LLAVE": ll,
-                        "Bodega": f[k_bod],
-                        "Codigo Articulo": f[k_cod],
+                        "Bodega": bodega_,
+                        "Codigo Articulo": cod_,
                         "Cantidad salida aplicada": cant,
                         "Fecha lote consumido": lote["fecha"],
                         "Origen lote": lote["origen"],
@@ -1270,10 +1792,35 @@ def procesar_inventario(historico, kardex, mes_final=9):
                 )
 
         # STOCK / COSTO DESPUÉS
-        s_des = max(s_antes + e_apl - s_apl, 0.0)
+        # Las salidas nunca superan lo disponible, así que no se crean
+        # stocks negativos. Un stock negativo HEREDADO del histórico se
+        # conserva visible (antes se llevaba a 0 en silencio y el motor
+        # dejaba de cuadrar con la hoja).
+        s_des = s_antes + e_apl - s_apl
+        if -EPS < s_des < 0:
+            s_des = 0.0
         c_des = c_antes + c_ent + c_sal
 
-        if c_des < 0 and abs(c_des) < 0.01:
+        # Corrección H-04: el costo de salida viene del Kardex y no del
+        # costo del inventario; cuando el stock queda en 0 puede quedar
+        # un valor sin unidades. Se lleva a 0 y la diferencia queda
+        # registrada como AJUSTE COSTO (hoja CONTROL_AJUSTES_COSTO),
+        # sin alterar el costo de ventas (CMV).
+        ajuste = 0.0
+        if abs(s_des) <= EPS and abs(c_des) > 0:
+            ajuste = -c_des
+            if abs(ajuste) >= 0.01:
+                ajustes.append(
+                    {
+                        "Fecha": fecha,
+                        "Bodega": bodega_,
+                        "Codigo Articulo": cod_,
+                        "Articulo": art,
+                        "LLAVE": ll,
+                        "Costo antes del ajuste": c_des,
+                        "Ajuste costo residual": ajuste,
+                    }
+                )
             c_des = 0.0
 
         stock_actual[ll] = s_des
@@ -1282,13 +1829,13 @@ def procesar_inventario(historico, kardex, mes_final=9):
         movs.append(
             {
                 "Fecha": fecha,
-                "Bodega": f[k_bod],
-                "Codigo Articulo": f[k_cod],
+                "Bodega": bodega_,
+                "Codigo Articulo": cod_,
                 "Articulo": art,
                 "LLAVE": ll,
                 "Stock antes": s_antes,
-                "Entrada Kardex": ent_,
-                "Salida Kardex": sal_,
+                "Entrada Kardex": float(f[i_ent_k]),
+                "Salida Kardex": float(f[i_sal_k]),
                 "Entrada aplicada": e_apl,
                 "Salida aplicada": -s_apl,
                 "Salida sin existencia": -s_sin,
@@ -1296,14 +1843,10 @@ def procesar_inventario(historico, kardex, mes_final=9):
                 "Costo Kardex Con Iva": costo_k,
                 "Costo entrada aplicado": c_ent,
                 "Costo salida aplicado": c_sal,
+                "Ajuste costo residual": ajuste,
                 "Costo después": c_des,
             }
         )
-
-        # FOTOS MENSUALES (se conserva por compatibilidad;
-        # ya NO determina la antigüedad)
-        while pendientes and fecha > pendientes[0][1]:
-            pendientes.pop(0)
 
     # ========================================================
     # DATAFRAMES DE CONTROL
@@ -1315,7 +1858,7 @@ def procesar_inventario(historico, kardex, mes_final=9):
         "Entrada aplicada", "Salida aplicada", "Salida sin existencia",
         "Stock después", "Costo Kardex Con Iva",
         "Costo entrada aplicado", "Costo salida aplicado",
-        "Costo después",
+        "Ajuste costo residual", "Costo después",
     ]
 
     cols_sin = [
@@ -1331,29 +1874,43 @@ def procesar_inventario(historico, kardex, mes_final=9):
         "Origen lote", "Costo unitario lote", "Costo salida LIFO",
     ]
 
+    cols_aj = [
+        "Fecha", "Bodega", "Codigo Articulo", "Articulo", "LLAVE",
+        "Costo antes del ajuste", "Ajuste costo residual",
+    ]
+
     df_mov = pd.DataFrame(movs, columns=cols_mov)
     df_sin = pd.DataFrame(sin_ex, columns=cols_sin)
     df_lifo = pd.DataFrame(lifo, columns=cols_lifo)
+    df_aj = pd.DataFrame(ajustes, columns=cols_aj)
     df_ch = pd.DataFrame(
         ctrl_hist, columns=["LLAVE", "MES", "TIPO", "CANTIDAD"]
     )
+
+    if revision:
+        df_revision = pd.concat(revision, ignore_index=True)
+    else:
+        df_revision = pd.DataFrame(
+            columns=["Fila en el archivo"] + COLUMNAS_MOVIMIENTO + ["Motivo"]
+        )
 
     # ========================================================
     # RESUMEN MENSUAL
     # (crea las columnas de los meses nuevos o sobrescribe las
     #  existentes; nunca duplica una columna de un mismo mes)
+    # Stock final = stock inicial + entradas + salidas (salidas < 0)
     # ========================================================
 
     primera = ~hist["LLAVE"].duplicated(keep="first")
 
-    stock_prev = hist["STOCK MAYO 2026"].copy()
-    coste_prev = hist["COSTE MAYO 2026"].copy()
+    stock_prev = hist[c_stock_base].copy()
+    coste_prev = hist[c_coste_base].copy()
 
-    for nombre, num in meses:
-        ini = pd.Timestamp(ANIO, num, 1)
-        fin = _fin_mes(ANIO, num) + pd.Timedelta(
-            hours=23, minutes=59, seconds=59
-        )
+    nuevas_cols = {}
+
+    for nombre, anio, num in meses:
+        ini = pd.Timestamp(anio, num, 1)
+        fin = fin_periodo(anio, num)
 
         datos = df_mov[(df_mov["Fecha"] >= ini) & (df_mov["Fecha"] <= fin)]
 
@@ -1363,6 +1920,7 @@ def procesar_inventario(historico, kardex, mes_final=9):
                 "Salida aplicada",
                 "Costo entrada aplicado",
                 "Costo salida aplicado",
+                "Ajuste costo residual",
             ]
         ].sum()
 
@@ -1371,34 +1929,49 @@ def procesar_inventario(historico, kardex, mes_final=9):
                 hist["LLAVE"].map(res[col]).fillna(0.0).where(primera, 0.0)
             )
 
-        sfx = f"{nombre} {ANIO}"
+        sfx = f"{nombre} {anio}"
 
-        hist[f"ENTRADA {sfx}"] = mapear("Entrada aplicada")
-        hist[f"SALIDA {sfx}"] = mapear("Salida aplicada")
-        hist[f"NETO {sfx}"] = hist[f"ENTRADA {sfx}"] + hist[f"SALIDA {sfx}"]
-        hist[f"COSTO ENTRADA {sfx}"] = mapear("Costo entrada aplicado")
-        hist[f"COSTO SALIDA {sfx}"] = mapear("Costo salida aplicado")
-        hist[f"STOCK {sfx}"] = stock_prev + hist[f"NETO {sfx}"]
-        hist[f"COSTE TOTAL {sfx}"] = (
-            coste_prev
-            + hist[f"COSTO ENTRADA {sfx}"]
-            + hist[f"COSTO SALIDA {sfx}"]
+        entrada_m = mapear("Entrada aplicada")
+        salida_m = mapear("Salida aplicada")
+        neto_m = entrada_m + salida_m
+        ce_m = mapear("Costo entrada aplicado")
+        cs_m = mapear("Costo salida aplicado")
+        aj_m = mapear("Ajuste costo residual")
+        stock_m = stock_prev + neto_m
+        coste_m = coste_prev + ce_m + cs_m + aj_m
+
+        nuevas_cols[f"ENTRADA {sfx}"] = entrada_m
+        nuevas_cols[f"SALIDA {sfx}"] = salida_m
+        nuevas_cols[f"NETO {sfx}"] = neto_m
+        nuevas_cols[f"COSTO ENTRADA {sfx}"] = ce_m
+        nuevas_cols[f"COSTO SALIDA {sfx}"] = cs_m
+        nuevas_cols[f"AJUSTE COSTO {sfx}"] = aj_m
+        nuevas_cols[f"STOCK {sfx}"] = stock_m
+        nuevas_cols[f"COSTE TOTAL {sfx}"] = coste_m
+
+        # ROTACIÓN MENSUAL (compatibilidad con el tablero)
+        nuevas_cols[f"ROTACION {sfx}"] = pd.Series(
+            np.where(
+                stock_prev > 0,
+                salida_m.abs() / stock_prev.replace(0, np.nan),
+                np.nan,
+            ),
+            index=hist.index,
         )
 
-        # ROTACIÓN MENSUAL
-        # Se conserva para compatibilidad con el tablero.
-        hist[f"ROTACION {sfx}"] = np.where(
-            stock_prev > 0,
-            hist[f"SALIDA {sfx}"].abs() / stock_prev.replace(0, np.nan),
-            np.nan,
-        )
+        stock_prev = stock_m
+        coste_prev = coste_m
 
-        # Continuar con stock/costo actual
-        stock_prev = hist[f"STOCK {sfx}"]
-        coste_prev = hist[f"COSTE TOTAL {sfx}"]
+    hist = pd.concat(
+        [
+            hist.drop(columns=[c for c in nuevas_cols if c in hist.columns]),
+            pd.DataFrame(nuevas_cols, index=hist.index),
+        ],
+        axis=1,
+    )
 
     # ========================================================
-    # INDICADORES Y ANTIGÜEDAD (NUEVA LÓGICA)
+    # INDICADORES Y ANTIGÜEDAD
     # Usa TODOS los meses disponibles para ubicar el primer stock
     # y los últimos 12 para la antigüedad.
     # ========================================================
@@ -1409,7 +1982,6 @@ def procesar_inventario(historico, kardex, mes_final=9):
         avisos,
     )
 
-    # Retirar los nombres antiguos de antigüedad: queda UNA sola columna
     norm_antiguos = {norm(x) for x in COLUMNAS_ANTIGUEDAD_ANTERIORES}
     hist = hist.drop(
         columns=[c for c in hist.columns if norm(c) in norm_antiguos]
@@ -1438,7 +2010,7 @@ def procesar_inventario(historico, kardex, mes_final=9):
             x in n
             for x in (
                 "STOCK", "COST", "ENTRADA", "SALIDA", "NETO",
-                "ROTACION", "CMV", "DIAS",
+                "ROTACION", "CMV", "DIAS", "AJUSTE",
             )
         ):
             if pd.api.types.is_numeric_dtype(hist[c]):
@@ -1446,14 +2018,16 @@ def procesar_inventario(historico, kardex, mes_final=9):
 
     # ========================================================
     # VERIFICACIONES
+    # Se separan los problemas heredados del histórico base de los
+    # causados por los movimientos procesados.
     # ========================================================
 
-    sfx_f = f"{meses[-1][0]} {ANIO}"
+    nombre_fin = nombre_periodo(anio_fin, mes_fin)
 
     verif = []
 
-    d_stock = hist[f"STOCK {sfx_f}"].sum() - sum(stock_actual.values())
-    d_coste = hist[f"COSTE TOTAL {sfx_f}"].sum() - sum(costo_actual.values())
+    d_stock = hist[f"STOCK {nombre_fin}"].sum() - sum(stock_actual.values())
+    d_coste = hist[f"COSTE TOTAL {nombre_fin}"].sum() - sum(costo_actual.values())
 
     verif.append(
         (
@@ -1471,30 +2045,65 @@ def procesar_inventario(historico, kardex, mes_final=9):
         )
     )
 
-    neg = sum(1 for v in stock_actual.values() if v < -0.000001)
-    verif.append(("Sin stocks negativos", neg == 0, f"{neg} llaves"))
+    negativos_base = {ll for ll, b in base.items() if b["stock"] < -0.000001}
+    con_movimiento = set(kp["LLAVE"])
 
-    desc = sum(
-        1
+    neg = {ll for ll, v in stock_actual.items() if v < -0.000001}
+    neg_nuevos = neg - negativos_base
+
+    verif.append(
+        (
+            "Sin stocks negativos generados por el Kardex",
+            len(neg_nuevos) == 0,
+            f"{len(neg_nuevos)} llaves",
+        )
+    )
+
+    desc = {
+        ll
         for ll in stock_actual
         if abs(
             sum(l["cantidad"] for l in lotes_lifo.get(ll, []))
             - stock_actual[ll]
         )
         > 0.001
-    )
-    verif.append(("Lotes LIFO cuadran con el stock", desc == 0, f"{desc} llaves"))
+    }
+    desc_nuevos = desc - negativos_base
 
-    resid = sum(
-        1
-        for ll in stock_actual
-        if stock_actual[ll] <= EPS and abs(costo_actual[ll]) > 0.01
-    )
     verif.append(
-        ("Sin costo residual con stock en 0", resid == 0, f"{resid} llaves")
+        (
+            "Lotes LIFO cuadran con el stock",
+            len(desc_nuevos) == 0,
+            f"{len(desc_nuevos)} llaves",
+        )
     )
 
-    # Una sola columna de antigüedad y en la última posición
+    resid = {
+        ll
+        for ll in stock_actual
+        if abs(stock_actual[ll]) <= EPS and abs(costo_actual[ll]) > 0.01
+    }
+    resid_nuevos = (resid & con_movimiento) - negativos_base
+
+    verif.append(
+        (
+            "Sin costo residual con stock en 0 en llaves con movimientos",
+            len(resid_nuevos) == 0,
+            f"{len(resid_nuevos)} llaves",
+        )
+    )
+
+    heredados = (neg & negativos_base) | (resid - con_movimiento)
+    verif.append(
+        (
+            "Novedades heredadas del histórico base (informativo)",
+            True,
+            f"{len(neg & negativos_base)} stocks negativos y "
+            f"{len(resid - con_movimiento)} costos residuales sin "
+            "movimientos posteriores",
+        )
+    )
+
     cols_antig = [c for c in hist.columns if norm(c).startswith("ANTIGUEDAD")]
     verif.append(
         (
@@ -1530,14 +2139,25 @@ def procesar_inventario(historico, kardex, mes_final=9):
 
     stats.update(
         {
-            "mes_final": meses[-1][0],
+            "periodo_base": etiqueta_periodo(anio_base, mes_base),
+            "periodo_final": etiqueta_periodo(anio_fin, mes_fin),
+            "periodos": [
+                etiqueta_periodo(a, m) for _, a, m in meses
+            ],
+            "mes_final": nombre_fin,
             "movimientos_procesados": len(df_mov),
             "con_salida_sin_existencia": len(df_sin),
             "unidades_sin_existencia": float(df_sin["Salida sin existencia"].sum()),
-            "stock_mayo": float(hist[c_stock_mayo].sum()),
-            "stock_final": float(hist[f"STOCK {sfx_f}"].sum()),
-            "coste_mayo": float(hist[c_coste_mayo].sum()),
-            "coste_final": float(hist[f"COSTE TOTAL {sfx_f}"].sum()),
+            "para_revision": len(df_revision),
+            "ajustes_costo": len(df_aj),
+            "valor_ajustes_costo": float(df_aj["Ajuste costo residual"].sum()),
+            "novedades_heredadas": len(heredados),
+            "stock_base": float(hist[c_stock_base].sum()),
+            "stock_mayo": float(hist[c_stock_base].sum()),
+            "stock_final": float(hist[f"STOCK {nombre_fin}"].sum()),
+            "coste_base": float(hist[c_coste_base].sum()),
+            "coste_mayo": float(hist[c_coste_base].sum()),
+            "coste_final": float(hist[f"COSTE TOTAL {nombre_fin}"].sum()),
             "sin_trazabilidad": 0,
             "periodo_inventario": info_periodo["periodo"],
             "meses_inventario": info_periodo["cantidad_meses"],
@@ -1558,12 +2178,15 @@ def procesar_inventario(historico, kardex, mes_final=9):
         "movimientos": df_mov,
         "sin_existencia": df_sin,
         "lifo": df_lifo,
+        "ajustes_costo": df_aj,
+        "rechazados": df_rechazados,
+        "revision": df_revision,
         "resumen": pd.DataFrame(
             [
                 {
                     "LLAVE": ll,
-                    "STOCK MAYO": base[ll]["stock"] if ll in base else 0.0,
-                    "COSTO MAYO": base[ll]["costo"] if ll in base else 0.0,
+                    "STOCK BASE": base[ll]["stock"] if ll in base else 0.0,
+                    "COSTO BASE": base[ll]["costo"] if ll in base else 0.0,
                     "STOCK FINAL": stock_actual[ll],
                     "COSTO FINAL": costo_actual[ll],
                 }
@@ -1610,6 +2233,14 @@ def resultado_a_excel(res):
                 w, sheet_name="CONTROL_FECHAS_INVALIDAS", index=False
             )
 
+        for clave, hoja in (
+            ("rechazados", "CONTROL_RECHAZADOS"),
+            ("revision", "CONTROL_REVISION"),
+            ("ajustes_costo", "CONTROL_AJUSTES_COSTO"),
+        ):
+            if clave in res and len(res[clave]):
+                res[clave].to_excel(w, sheet_name=hoja, index=False)
+
     return buf.getvalue()
 
 
@@ -1640,10 +2271,9 @@ def firma_archivos(*rutas):
     )
 
 
-def _secuencia_meses():
-    sec = [(NOMBRES_MES[m - 1], 2025) for m in range(6, 13)]
-    sec += [(NOMBRES_MES[m - 1], 2026) for m in range(1, 13)]
-    return sec
+def _secuencia_meses(df):
+    """Meses (nombre, año) presentes en los datos, sin años fijos."""
+    return [(NOMBRES_MES[m - 1], a) for a, m in meses_con_stock(df)]
 
 
 # ============================================================
@@ -1655,7 +2285,7 @@ def construir_esquema(df):
 
     meses = []
 
-    for nombre, anio in _secuencia_meses():
+    for nombre, anio in _secuencia_meses(df):
         sfx = f"{nombre} {anio}"
 
         stock = col_exacta(df, f"STOCK {sfx}")
@@ -1717,9 +2347,11 @@ def construir_esquema(df):
         "etiquetas": [m["label"] for m in meses],
         "corte": ultimo["sfx"].title(),
         "col_stock": ultimo["stock"],
+        # Corrección H-06: valor del MISMO mes que el stock del corte
+        # (antes estaba fijo en 'COSTE TOTAL AGOSTO 2026').
         "col_coste": (
-            col_exacta(df, "COSTE TOTAL AGOSTO 2026")
-            if col_exacta(df, "COSTE TOTAL AGOSTO 2026")
+            ultimo["coste"]
+            if ultimo["coste"]
             else (con_coste[-1]["coste"] if con_coste else None)
         ),
         "col_antiguedad": col_antiguedad_tablero,
@@ -1829,193 +2461,14 @@ def kpis_corte(df_f, esq):
 
 # ============================================================
 # PESTAÑA STREAMLIT
+# La página vive ahora en gestion_kardex.py (cargues mensuales con
+# registro de periodos). Se conserva este nombre por compatibilidad.
 # ============================================================
 
 def pagina_actualizar_kardex(st, usuario, archivo_actualizado, archivo_historico):
-    """Renderiza la pestaña Actualizar Kardex."""
+    """Renderiza la página Actualizar Kardex (ver gestion_kardex.py)."""
+    import gestion_kardex
 
-    try:
-        admins = [str(x).strip() for x in list(st.secrets["admins"])]
-    except Exception:
-        admins = []
-
-    if admins and usuario not in admins:
-        st.title("Actualizar Kardex")
-        st.warning("Tu usuario no tiene permiso para actualizar la información.")
-        return
-
-    st.title("Actualizar Kardex")
-
-    st.caption(
-        "Carga el Kardex detallado y el tablero recalcula stock, costos, "
-        "rotación y antigüedad utilizando los últimos 12 meses "
-        "disponibles en la base de datos."
-    )
-
-    hay_base = bool(archivo_historico and os.path.exists(archivo_historico))
-
-    c1, c2 = st.columns([1.3, 1])
-
-    with c1:
-        kardex_file = st.file_uploader(
-            "Kardex (Excel con el detalle de movimientos)",
-            type=["xlsx", "xlsm"],
-            key="up_kardex",
-        )
-
-        hist_file = st.file_uploader(
-            (
-                "Histórico base (opcional)"
-                if hay_base
-                else "Histórico base (obligatorio)"
-            ),
-            type=["xlsx", "xlsm"],
-            key="up_historico",
-            help=(
-                "Si no lo cargas se usa el histórico guardado en el servidor."
-                if hay_base
-                else "No hay un histórico guardado en el servidor."
-            ),
-        )
-
-    with c2:
-        mes_final = st.selectbox(
-            "Calcular hasta",
-            [(NOMBRES_MES[m - 1], m) for m in range(6, 13)],
-            index=3,
-            format_func=lambda x: f"{x[0].title()} {ANIO}",
-        )
-
-        st.info(
-            "Se excluyen movimientos **5-ANULADO** "
-            "y las bodegas 11, 12, 18, 19, 20 y 21. "
-            "Las salidas que superan el stock se "
-            "registran como *salida sin existencia*. "
-            "La antigüedad se determina mediante "
-            "indicadores de los últimos 12 meses "
-            "disponibles."
-        )
-
-    puede = kardex_file is not None and (hist_file is not None or hay_base)
-
-    exito = False
-
-    if st.button(
-        "Procesar y actualizar el tablero",
-        disabled=not puede,
-        use_container_width=True,
-    ):
-        try:
-            with st.spinner(
-                "Procesando Kardex y calculando indicadores de inventario..."
-            ):
-                origen_h = hist_file if hist_file is not None else archivo_historico
-
-                historico, _ = leer_historico(origen_h)
-                kardex, hoja_k = leer_kardex(kardex_file)
-
-                res = procesar_inventario(historico, kardex, mes_final[1])
-
-                excel = resultado_a_excel(res)
-
-            guardado = True
-
-            try:
-                with open(archivo_actualizado, "wb") as f:
-                    f.write(excel)
-            except Exception:
-                guardado = False
-
-            df_nuevo, _ = leer_historico(excel)
-
-            st.session_state["df_actualizado"] = df_nuevo
-            st.session_state["res_actualizacion"] = res
-            st.session_state["excel_actualizado"] = excel
-            st.session_state["guardado_en_disco"] = guardado
-
-            try:
-                st.cache_data.clear()
-            except Exception:
-                pass
-
-            exito = True
-
-        except Exception as e:
-            st.error(f"No fue posible procesar los archivos.\n\n{e}")
-
-    if exito:
-        st.rerun()
-
-    res = st.session_state.get("res_actualizacion")
-
-    if res is None:
-        return
-
-    s = res["stats"]
-
-    st.success(
-        f"Tablero actualizado hasta {s['mes_final'].title()} {ANIO}. "
-        f"El análisis de inventario utiliza {s['meses_inventario']} meses: "
-        f"{s['periodo_inventario']}."
-    )
-
-    if not st.session_state.get("guardado_en_disco", True):
-        st.warning(
-            "No se pudo guardar el resultado en el servidor: los datos se "
-            "verán solo en esta sesión. Descarga el Excel para conservarlo."
-        )
-
-    m1, m2, m3, m4, m5 = st.columns(5)
-
-    m1.metric(
-        "Movimientos procesados",
-        f"{s['movimientos_procesados']:,}".replace(",", "."),
-    )
-    m2.metric("Llaves nuevas", f"{s['llaves_nuevas']:,}".replace(",", "."))
-    m3.metric("Anulados excluidos", f"{s['anulados']:,}".replace(",", "."))
-    m4.metric(
-        "Salidas sin existencia",
-        f"{s['con_salida_sin_existencia']:,}".replace(",", "."),
-    )
-    m5.metric("Sin trazabilidad", "No aplica")
-
-    st.caption(
-        f"Período indicadores: {s['periodo_inventario']} · "
-        f"Filas Kardex leídas: {s['filas_kardex']:,}".replace(",", ".")
-    )
-
-    for aviso in res["avisos"]:
-        st.warning(aviso)
-
-    with st.expander("Verificaciones del cálculo", expanded=True):
-        for nombre, ok, detalle in res["verificaciones"]:
-            (st.success if ok else st.error)(f"{nombre} ({detalle})")
-
-    if len(res["sin_existencia"]):
-        with st.expander(f"Salidas sin existencia ({len(res['sin_existencia'])})"):
-            st.dataframe(
-                res["sin_existencia"],
-                use_container_width=True,
-                hide_index=True,
-            )
-
-    nuevas = res["historico"][res["historico"]["OBSERVACION"] == MARCA_NUEVO]
-
-    if len(nuevas):
-        with st.expander(f"Artículos nuevos desde el Kardex ({len(nuevas)})"):
-            cols = [
-                c
-                for c in ["Bodega", "Codigo Articulo", "Articulo", "LLAVE"]
-                if c in nuevas.columns
-            ]
-            st.dataframe(nuevas[cols], use_container_width=True, hide_index=True)
-
-    st.download_button(
-        "Descargar Excel actualizado (con hojas de control)",
-        data=st.session_state["excel_actualizado"],
-        file_name="INVENTARIO_ACTUALIZADO_LIFO.xlsx",
-        mime=(
-            "application/vnd.openxmlformats-officedocument."
-            "spreadsheetml.sheet"
-        ),
+    return gestion_kardex.pagina_actualizar_kardex(
+        st, usuario, archivo_actualizado, archivo_historico
     )

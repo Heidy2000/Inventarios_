@@ -1,2 +1,12 @@
 # contenido que ya estaba en GitHub
 .streamlit/secrets.toml
+
+# Datos generados por la aplicación en el servidor (cargues del Kardex,
+# conciliaciones, respaldos y resultado actualizado). Contienen
+# información de inventario: no deben subirse al repositorio.
+datos/
+INVENTARIO_ACTUALIZADO_LIFO.xlsx
+
+# Python
+__pycache__/
+*.pyc
