@@ -33,11 +33,13 @@ ESTADO_DIFERENCIA = "Con diferencia"
 ESTADO_SIN_REAL = "Sin dato real"
 ESTADO_SIN_CALCULO = "Sin cálculo"
 ESTADO_PENDIENTE = "Pendiente de validación"
+ESTADO_CONSERVA_KARDEX = "Cierre en 0: se conserva el Kardex"
 
 ORDEN_ESTADOS = [
     ESTADO_DIFERENCIA,
     ESTADO_PENDIENTE,
     ESTADO_SIN_CALCULO,
+    ESTADO_CONSERVA_KARDEX,
     ESTADO_SIN_REAL,
     ESTADO_AJUSTADO,
     ESTADO_CONCILIADO,
@@ -54,11 +56,15 @@ COLUMNAS_RESULTADO = [
     "Stock final calculado",
     "Stock final real reportado",
     "Diferencia",
+    "Valor inicial calculado",
+    "Costo entradas del mes",
+    "Costo salidas del mes",
     "Valor final calculado",
     "Valor final real reportado",
     "Diferencia valor",
     "Ajuste unidades propuesto",
     "Ajuste valor propuesto",
+    "Tipo de ajuste",
     "Ajuste vigente unidades",
     "Ajuste vigente valor",
     "Stock final ajustado",
@@ -72,6 +78,7 @@ COLUMNAS_RESULTADO = [
 COLUMNAS_NUMERICAS = [
     "Stock inicial calculado", "Entradas del mes", "Salidas del mes",
     "Stock final calculado", "Stock final real reportado", "Diferencia",
+    "Valor inicial calculado", "Costo entradas del mes", "Costo salidas del mes",
     "Valor final calculado", "Valor final real reportado", "Diferencia valor",
     "Ajuste unidades propuesto", "Ajuste valor propuesto",
     "Ajuste vigente unidades", "Ajuste vigente valor",
@@ -194,38 +201,44 @@ def detectar_columnas(df):
 
 def stock_calculado(df_calc, anio, mes):
     """
-    Por LLAVE y para el periodo: stock inicial, entradas, salidas (con su
-    signo negativo), stock y valor finales reconstruidos con el Kardex
-    (ANTES de los ajustes de conciliación), ajustes de conciliación
-    vigentes y stock y valor finales ajustados.
+    Por LLAVE y para el periodo, separando lo que viene del Kardex de los
+    ajustes de conciliación vigentes:
+
+      stock inicial + entradas Kardex + salidas Kardex = stock final calculado
+      valor inicial + costo entradas Kardex + costo salidas Kardex
+          (+ ajuste de costo residual)              = valor final calculado
+      calculado + ajuste vigente                    = final ajustado
     """
     nombre = m.nombre_periodo(anio, mes)
     c_stock = m.col_exacta(df_calc, f"STOCK {nombre}")
     if c_stock is None:
         raise ValueError(f"El periodo {nombre.title()} no está calculado en la aplicación.")
 
-    c_ent = m.col_exacta(df_calc, f"ENTRADA {nombre}")
-    c_sal = m.col_exacta(df_calc, f"SALIDA {nombre}")
+    def col(texto):
+        return m.col_exacta(df_calc, f"{texto} {nombre}")
+
     c_val = m.col_coste_mes(df_calc, NOMBRE_MES(mes), anio)
-    c_aj_u = m.col_exacta(df_calc, f"AJUSTE CONCILIACION UNIDADES {nombre}")
-    c_aj_v = m.col_exacta(df_calc, f"AJUSTE CONCILIACION VALOR {nombre}")
 
     anio_p, mes_p = m.periodo_de_num(m.periodo_num(anio, mes) - 1)
-    c_prev = m.col_exacta(df_calc, f"STOCK {m.nombre_periodo(anio_p, mes_p)}")
-    if c_prev is None:
-        c_prev = m.col_exacta(df_calc, "STOCK INICIAL")
+    c_prev = m.col_exacta(df_calc, f"STOCK {m.nombre_periodo(anio_p, mes_p)}") or m.col_exacta(df_calc, "STOCK INICIAL")
+    c_val_prev = m.col_coste_mes(df_calc, NOMBRE_MES(mes_p), anio_p) or m.col_exacta(df_calc, "COSTE INICIAL")
 
     c_bod = m.col_buscar(df_calc, ["Bodega"])
     c_cod = m.col_buscar(df_calc, ["Codigo Articulo"])
     c_art = m.col_exacta(df_calc, "Articulo")
 
-    def num(col):
-        return m.a_numero(df_calc[col]) if col else pd.Series(0.0, index=df_calc.index)
+    def num(c):
+        return m.a_numero(df_calc[c]) if c else pd.Series(0.0, index=df_calc.index)
+
+    aj_e = num(col("AJUSTE CONCILIACION ENTRADA"))
+    aj_s = num(col("AJUSTE CONCILIACION SALIDA"))
+    aj_ce = num(col("AJUSTE CONCILIACION COSTO ENTRADA"))
+    aj_cs = num(col("AJUSTE CONCILIACION COSTO SALIDA"))
+    aj_u = aj_e + aj_s
+    aj_v = aj_ce + aj_cs
 
     stock_aj = num(c_stock)
     valor_aj = num(c_val)
-    aj_u = num(c_aj_u)
-    aj_v = num(c_aj_v)
 
     base = pd.DataFrame({
         "LLAVE": (
@@ -236,9 +249,12 @@ def stock_calculado(df_calc, anio, mes):
         "Codigo Articulo": df_calc[c_cod].apply(m.codigo),
         "Articulo": df_calc[c_art].apply(m.texto) if c_art else "",
         "Stock inicial calculado": num(c_prev),
-        "Entradas del mes": num(c_ent),
-        "Salidas del mes": num(c_sal),
+        "Entradas del mes": num(col("ENTRADA")) - aj_e,
+        "Salidas del mes": num(col("SALIDA")) - aj_s,
         "Stock final calculado": stock_aj - aj_u,
+        "Valor inicial calculado": num(c_val_prev),
+        "Costo entradas del mes": num(col("COSTO ENTRADA")) - aj_ce,
+        "Costo salidas del mes": num(col("COSTO SALIDA")) - aj_cs,
         "Valor final calculado": valor_aj - aj_v,
         "Ajuste vigente unidades": aj_u,
         "Ajuste vigente valor": aj_v,
@@ -453,6 +469,18 @@ def conciliar(
             observ.append("La referencia no existe en el cálculo de esta bodega; el ajuste la crea")
             continue
 
+        # Regla: cierre en 0 y Kardex con existencias positivas -> se
+        # conserva el saldo del Kardex, sin ajuste.
+        if abs(real_u) <= 1e-9 and calc_u > 1e-9:
+            estado.append(ESTADO_CONSERVA_KARDEX)
+            observ.append(
+                f"El inventario de cierre reporta 0 y el Kardex {ui.formato_numero(calc_u)} und.: "
+                "se conserva el saldo del Kardex (no se ajusta)"
+            )
+            prop_u[-1] = 0.0
+            prop_v[-1] = 0.0
+            continue
+
         vigente = abs(vig_u) > tol_u or abs(vig_v) > tol_v
         final_ok = abs(aj_u_final - real_u) <= tol_u and (
             not con_valor or abs(aj_v_final - real_v) <= tol_v
@@ -475,6 +503,13 @@ def conciliar(
     t["Observación"] = observ
     t["Ajuste unidades propuesto"] = prop_u
     t["Ajuste valor propuesto"] = prop_v
+    t["Tipo de ajuste"] = [
+        "" if pd.isna(u) or (abs(u) <= 1e-9 and (pd.isna(v) or abs(v) <= 1e-9))
+        else "Entrada de conciliación" if u > 1e-9
+        else "Salida de conciliación" if u < -1e-9
+        else "Ajuste de valor"
+        for u, v in zip(prop_u, prop_v)
+    ]
 
     t["Bodega"] = t["Bodega"].where(t["Bodega"].notna() & (t["Bodega"] != ""), t["Bodega real"])
     t["Codigo Articulo"] = t["Codigo Articulo"].where(t["Codigo Articulo"].notna(), t["Codigo real"])
@@ -483,7 +518,7 @@ def conciliar(
     )
     t["Stock final real reportado"] = t["Cantidad"]
     t["Valor final real reportado"] = t["Valor"]
-    comparables = t["Estado"].isin([ESTADO_CONCILIADO, ESTADO_DIFERENCIA, ESTADO_AJUSTADO])
+    comparables = t["Estado"].isin([ESTADO_CONCILIADO, ESTADO_DIFERENCIA, ESTADO_AJUSTADO, ESTADO_CONSERVA_KARDEX])
     t["Diferencia"] = np.where(comparables, t["Stock final calculado"] - t["Cantidad"], np.nan)
     t["Diferencia valor"] = np.where(
         comparables & t["Valor"].notna(), t["Valor final calculado"] - t["Valor"], np.nan
@@ -560,17 +595,17 @@ def conciliar(
 # AJUSTES PROPUESTOS
 # ============================================================
 
-def ajustes_propuestos(tabla, ausentes_como_cero=False):
+def ajustes_propuestos(tabla):
     """
-    Inventario real a fijar en cada LLAVE que lo necesita (el motor lo
-    aplica al cierre del periodo como AJUSTE CONCILIACION):
+    Inventario de cierre a fijar en cada LLAVE que lo necesita (el motor
+    lo aplica al cierre del periodo como entrada o salida de conciliación):
 
       * Con diferencia / Conciliado con ajuste / Sin cálculo con cantidad
-        real válida -> stock real y valor real del archivo.
-      * Con 'ausentes_como_cero': las referencias con stock calculado que
-        no figuran en el archivo real -> stock 0 y valor 0.
+        real válida -> stock y valor del inventario de cierre.
 
-    Los pendientes de validación y las cantidades vacías nunca se ajustan.
+    No se ajustan: pendientes de validación, cantidades vacías,
+    referencias ausentes del archivo de cierre y cierres en 0 con
+    existencias positivas en el Kardex (se conserva el Kardex).
     """
     validos = tabla[
         tabla["Estado"].isin([ESTADO_DIFERENCIA, ESTADO_AJUSTADO, ESTADO_SIN_CALCULO])
@@ -584,35 +619,16 @@ def ajustes_propuestos(tabla, ausentes_como_cero=False):
     )
     validos = validos[requiere]
 
-    propuesta = pd.DataFrame({
+    return pd.DataFrame({
         "Bodega": validos["Bodega"],
         "Codigo Articulo": validos["Codigo Articulo"],
         "Articulo": validos["Articulo"],
+        "Tipo de ajuste": validos["Tipo de ajuste"],
         "Stock real": validos["Stock final real reportado"],
         "Valor real": validos["Valor final real reportado"],
         "Ajuste unidades aprobado": validos["Ajuste unidades propuesto"],
         "Ajuste valor aprobado": validos["Ajuste valor propuesto"],
-    })
-
-    if ausentes_como_cero:
-        aus = tabla[
-            (tabla["En archivo real"] == "No")
-            & (
-                (tabla["Stock final calculado"].abs() > 1e-9)
-                | (tabla["Valor final calculado"].abs() > 0.5)
-            )
-        ]
-        propuesta = pd.concat([propuesta, pd.DataFrame({
-            "Bodega": aus["Bodega"],
-            "Codigo Articulo": aus["Codigo Articulo"],
-            "Articulo": aus["Articulo"],
-            "Stock real": 0.0,
-            "Valor real": 0.0,
-            "Ajuste unidades aprobado": -aus["Stock final calculado"],
-            "Ajuste valor aprobado": -aus["Valor final calculado"],
-        })], ignore_index=True)
-
-    return propuesta.reset_index(drop=True)
+    }).reset_index(drop=True)
 
 
 def ajustes_que_se_retiran(tabla, propuesta):
@@ -749,6 +765,7 @@ def _colores_estado(valor):
         ESTADO_PENDIENTE: f"background-color: {ui.NARANJA_SUAVE}; color: {ui.NARANJA_OSCURO}",
         ESTADO_SIN_CALCULO: f"background-color: {ui.AZUL_SUAVE}; color: {ui.AZUL}",
         ESTADO_SIN_REAL: "background-color: #F1F3F6; color: #5F7189",
+        ESTADO_CONSERVA_KARDEX: "background-color: #F1F3F6; color: #5F7189",
     }
     return colores.get(valor, "")
 
@@ -784,7 +801,8 @@ def _mostrar_tabla(st, tabla, resumen, clave):
         ("Pendientes de validación", ui.formato_entero(pe.get(ESTADO_PENDIENTE, 0)),
          "duplicados o datos inválidos", "naranja"),
         ("Sin cálculo", ui.formato_entero(pe.get(ESTADO_SIN_CALCULO, 0)), "solo en el archivo real", "azul"),
-        ("Sin dato real", ui.formato_entero(pe.get(ESTADO_SIN_REAL, 0)), "solo en el cálculo", "gris"),
+        ("Sin dato real", ui.formato_entero(pe.get(ESTADO_SIN_REAL, 0) + pe.get(ESTADO_CONSERVA_KARDEX, 0)),
+         f"{pe.get(ESTADO_CONSERVA_KARDEX, 0)} con cierre en 0 (se conserva el Kardex)", "gris"),
     ])
 
     notas = []
@@ -874,13 +892,15 @@ def _seccion_ajustes(st, tabla, resumen, ident, base_dir, archivo_historico,
         )
         return
 
-    ausentes = st.checkbox(
-        "Llevar a 0 las referencias con stock calculado que no aparecen en el inventario real",
-        value=False, key="conc_ausentes_cero",
-        help="Úsalo solo si el archivo real lista TODAS las referencias de las bodegas conciliadas.",
+    st.caption(
+        "Faltante → entrada de conciliación (unidades y costo de entrada). "
+        "Sobrante → salida de conciliación (unidades negativas y costo de salida). "
+        "Sin valor de cierre, las unidades se valoran al costo promedio vigente. "
+        "Cierres en 0 con existencias en el Kardex y referencias ausentes del "
+        "archivo no se ajustan."
     )
 
-    propuesta = ajustes_propuestos(tabla, ausentes_como_cero=ausentes)
+    propuesta = ajustes_propuestos(tabla)
     retirados = ajustes_que_se_retiran(tabla, propuesta)
 
     pu = propuesta["Ajuste unidades aprobado"].fillna(0)

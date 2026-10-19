@@ -52,20 +52,35 @@ stock final del mes = stock inicial del mes + entradas + salidas
 
 ## Conciliación y ajustes (usuario `admin`)
 
-1. *Conciliación mensual* → elegir el periodo y cargar el inventario real del cierre (Excel o CSV).
+1. *Conciliación mensual* → elegir el periodo y cargar el inventario de cierre (Excel o CSV).
 2. Confirmar las columnas: bodega, código, cantidad y, opcionalmente, valor total.
-3. La tabla compara por bodega + referencia las unidades y el valor que deja el Kardex con los del archivo real:
-   * `Diferencia = calculado − real` (unidades y valor).
-   * `Ajuste propuesto = real − calculado`: positivo si falta en el cálculo, negativo si sobra.
-4. *Aplicar ajustes al inventario* (con confirmación) guarda el inventario real aprobado en `datos/ajustes/AAAA-MM.csv.gz`.
-   * Los movimientos del Kardex no se tocan.
-   * El motor aplica el ajuste al cierre del mes como movimiento `AJUSTE CONCILIACION`, en columnas propias: `AJUSTE CONCILIACION UNIDADES <MES>` y `AJUSTE CONCILIACION VALOR <MES>`.
-   * El detalle queda en la hoja `CONTROL_AJUSTES_CONCILIACION`: antes, real, ajuste, origen del valor, usuario y archivo.
-5. El mes siguiente parte del inventario ajustado.
-   * Si luego se corrige el Kardex de ese mes, el ajuste se recalcula para que el stock siga igual al conteo; la hoja de control marca el cambio.
-   * Aplicar de nuevo reemplaza los ajustes del periodo; nunca los suma dos veces. También se pueden retirar.
+3. La tabla compara por bodega + referencia las unidades y el valor que deja el Kardex con el cierre:
+   * `Diferencia = calculado − cierre`.
+   * `Ajuste propuesto = cierre − calculado`.
+4. *Aplicar ajustes al inventario* (con confirmación) registra un movimiento `AJUSTE CONCILIACION` al cierre del mes, dentro de las columnas del mes:
+   * **Faltante** → entrada de conciliación: suma unidades en `ENTRADA` y su costo en `COSTO ENTRADA`.
+   * **Sobrante** → salida de conciliación: unidades **negativas** en `SALIDA` y su costo en `COSTO SALIDA`.
+   * **Solo valor** (unidades iguales) → ajuste de costo de entrada (si suma) o de salida (si resta), sin unidades.
+   * `STOCK` y `COSTE TOTAL` del mes, y los meses siguientes, se recalculan con esas columnas.
+   * La parte que corresponde a la conciliación queda en `AJUSTE CONCILIACION ENTRADA / SALIDA / COSTO ENTRADA / COSTO SALIDA <MES>`. Así, Kardex = total − ajuste.
+5. Valoración del ajuste:
+   * Con valor en el cierre, el coste final queda igual a ese valor.
+   * Sin valor, las unidades se valoran al **costo promedio vigente** (valor ÷ unidades), el mismo criterio con que el motor mantiene el valor del inventario.
+   * Si unidades y valor van en sentidos opuestos, las unidades van al costo promedio y el resto como ajuste de valor. Así ninguna salida aumenta el valor ni ninguna entrada lo disminuye.
+6. No se ajustan:
+   * cierres en 0 con existencias positivas en el Kardex (se conserva el saldo del Kardex);
+   * referencias ausentes del archivo;
+   * filas pendientes de validación.
+7. Aplicar de nuevo reemplaza los ajustes del periodo; nunca los suma dos veces. También se pueden retirar. Si luego se corrige el Kardex del mes, el ajuste se recalcula y la hoja `CONTROL_AJUSTES_CONCILIACION` lo marca.
 
-Sin columna de valor, el valor del ajuste se calcula con el costo unitario del inventario reconstruido. Los ajustes no cambian el costo de ventas (CMV).
+Como las salidas de conciliación quedan en `COSTO SALIDA`, el costo de ventas (CMV) y la rotación las incluyen.
+
+Verificaciones automáticas en cada proceso:
+* stock = anterior + entradas + salidas;
+* coste = anterior + costo entradas + costo salidas;
+* columnas = Kardex + conciliación;
+* historial hasta el mes base sin cambios;
+* cada referencia ajustada cierra igual al inventario cargado.
 
 ## Usuarios y permisos
 

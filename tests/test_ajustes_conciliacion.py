@@ -64,8 +64,8 @@ def conciliar(esc, filas, periodo="2026-06", con_valor=True, **kw):
     )
 
 
-def aplicar(esc, tabla, periodo="2026-06", usuario="admin", **kw):
-    propuesta = c.ajustes_propuestos(tabla, **kw)
+def aplicar(esc, tabla, periodo="2026-06", usuario="admin"):
+    propuesta = c.ajustes_propuestos(tabla)
     res, _ = g.aplicar_ajustes_conciliacion(
         periodo, propuesta, esc.base, esc.almacen, usuario, esc.ruta_actualizado,
         archivo="real_junio.xlsx",
@@ -154,28 +154,90 @@ class TestAplicarAjustes(unittest.TestCase):
                 self.assertEqual(valor(self.h, "STOCK JUNIO 2026", llave), und)
                 self.assertEqual(valor(self.h, "COSTE TOTAL JUNIO 2026", llave), val)
 
-    def test_ajustes_identificados_en_columnas_propias(self):
-        self.assertEqual(valor(self.h, "AJUSTE CONCILIACION UNIDADES JUNIO 2026", "1_111"), -5)
-        self.assertEqual(valor(self.h, "AJUSTE CONCILIACION VALOR JUNIO 2026", "1_111"), -50)
-        self.assertEqual(valor(self.h, "AJUSTE CONCILIACION UNIDADES JUNIO 2026", "1_222"), 5)
-        self.assertEqual(valor(self.h, "AJUSTE CONCILIACION VALOR JUNIO 2026", "1_222"), 70)
+    def test_salida_de_conciliacion_en_salidas_y_costo_de_salida(self):
+        # 1_111: sobran 5 und. y $50 -> salida de conciliación
+        h = self.h
+        self.assertEqual(valor(h, "SALIDA JUNIO 2026", "1_111"), -20)          # -15 Kardex -5 ajuste
+        self.assertEqual(valor(h, "COSTO SALIDA JUNIO 2026", "1_111"), -200)   # -150 Kardex -50 ajuste
+        self.assertEqual(valor(h, "ENTRADA JUNIO 2026", "1_111"), 20)
+        self.assertEqual(valor(h, "COSTO ENTRADA JUNIO 2026", "1_111"), 200)
+        self.assertEqual(valor(h, "AJUSTE CONCILIACION SALIDA JUNIO 2026", "1_111"), -5)
+        self.assertEqual(valor(h, "AJUSTE CONCILIACION COSTO SALIDA JUNIO 2026", "1_111"), -50)
+        self.assertEqual(valor(h, "AJUSTE CONCILIACION ENTRADA JUNIO 2026", "1_111"), 0)
+
+    def test_entrada_de_conciliacion_en_entradas_y_costo_de_entrada(self):
+        # 1_222: faltan 5 und. y $70 -> entrada de conciliación
+        h = self.h
+        self.assertEqual(valor(h, "ENTRADA JUNIO 2026", "1_222"), 5)
+        self.assertEqual(valor(h, "COSTO ENTRADA JUNIO 2026", "1_222"), 70)
+        self.assertEqual(valor(h, "SALIDA JUNIO 2026", "1_222"), -10)          # Kardex sin cambio
+        self.assertEqual(valor(h, "COSTO SALIDA JUNIO 2026", "1_222"), -100)
+        # 7_111: stock -2 / -$20 y cierre 0 / $0 -> entrada de 2 und. y $20
+        self.assertEqual(valor(h, "ENTRADA JUNIO 2026", "7_111"), 2)
+        self.assertEqual(valor(h, "COSTO ENTRADA JUNIO 2026", "7_111"), 20)
+        # 1_444 nueva: entrada de 3 und. y $90
+        self.assertEqual(valor(h, "ENTRADA JUNIO 2026", "1_444"), 3)
+        self.assertEqual(valor(h, "COSTO ENTRADA JUNIO 2026", "1_444"), 90)
+
+    def test_acumulados_del_mes_son_coherentes(self):
+        h = self.h
+        for llave in ["1_111", "1_222", "7_111", "1_444"]:
+            with self.subTest(llave=llave):
+                stock = (valor(h, "STOCK MAYO 2026", llave) + valor(h, "ENTRADA JUNIO 2026", llave)
+                         + valor(h, "SALIDA JUNIO 2026", llave))
+                coste = (valor(h, "COSTE MAYO 2026", llave) + valor(h, "COSTO ENTRADA JUNIO 2026", llave)
+                         + valor(h, "COSTO SALIDA JUNIO 2026", llave) + valor(h, "AJUSTE COSTO JUNIO 2026", llave))
+                self.assertAlmostEqual(stock, valor(h, "STOCK JUNIO 2026", llave))
+                self.assertAlmostEqual(coste, valor(h, "COSTE TOTAL JUNIO 2026", llave))
+                self.assertEqual(valor(h, "NETO JUNIO 2026", llave),
+                                 valor(h, "ENTRADA JUNIO 2026", llave) + valor(h, "SALIDA JUNIO 2026", llave))
+
+    def test_verificaciones_de_coherencia_en_verde(self):
+        nombres = {v[0]: v for v in self.res["verificaciones"]}
+        for clave in [
+            "Stock de cada mes = stock anterior + entradas + salidas",
+            "Coste de cada mes = coste anterior + costo entradas + costo salidas",
+            "Entradas, salidas y costos = movimientos del Kardex + ajustes de conciliación",
+            "Historial original (hasta el mes base) sin cambios",
+            "Llaves ajustadas: stock y coste final iguales al inventario de cierre",
+        ]:
+            with self.subTest(verificacion=clave):
+                self.assertTrue(nombres[clave][1], nombres[clave])
+        self.assertEqual([v for v in self.res["verificaciones"] if not v[1]], [])
 
     def test_movimientos_originales_y_signos_sin_cambios(self):
-        self.assertEqual(valor(self.h, "ENTRADA JUNIO 2026", "1_111"), 20)
-        self.assertEqual(valor(self.h, "SALIDA JUNIO 2026", "1_111"), -15)
-        self.assertEqual(valor(self.h, "SALIDA JUNIO 2026", "7_111"), -12)
-        self.assertEqual(valor(self.h, "COSTO SALIDA JUNIO 2026", "1_111"), -150)
         mov_k = self.res["movimientos"]
-        kardex = mov_k[mov_k["Tipo movimiento"] == m.TIPO_KARDEX]
-        ajustes = mov_k[mov_k["Tipo movimiento"] == m.TIPO_AJUSTE_CONCILIACION]
+        kardex = mov_k[mov_k["Tipo movimiento"] == m.TIPO_KARDEX].set_index(["LLAVE", "Fecha"])
+        ajustes = mov_k[mov_k["Tipo movimiento"] == m.TIPO_AJUSTE_CONCILIACION].set_index("LLAVE")
         self.assertEqual(len(kardex), 4)
         self.assertEqual(len(ajustes), 4)
+        self.assertEqual(kardex.loc[("1_111", pd.Timestamp("2026-06-20")), "Salida aplicada"], -15)
+        self.assertEqual(kardex.loc[("1_111", pd.Timestamp("2026-06-20")), "Costo salida aplicado"], -150)
+        self.assertEqual(kardex.loc[("7_111", pd.Timestamp("2026-06-15")), "Salida aplicada"], -12)
         self.assertTrue((kardex["Ajuste conciliación unidades"] == 0).all())
-        self.assertTrue((ajustes["Entrada aplicada"] == 0).all())
-        self.assertTrue((ajustes["Salida aplicada"] == 0).all())
+        # La salida de conciliación queda negativa, en su propio movimiento
+        self.assertEqual(ajustes.loc["1_111", "Salida aplicada"], -5)
+        self.assertEqual(ajustes.loc["1_111", "Costo salida aplicado"], -50)
+        self.assertEqual(ajustes.loc["1_222", "Entrada aplicada"], 5)
+        self.assertEqual(ajustes.loc["1_222", "Costo entrada aplicado"], 70)
+        self.assertTrue((ajustes["Salida aplicada"] <= 0).all())
+        self.assertTrue((ajustes["Entrada aplicada"] >= 0).all())
 
-    def test_el_ajuste_no_cambia_el_costo_de_ventas(self):
-        self.assertEqual(valor(self.h, "CMV 12 MESES", "1_111"), 150)
+    def test_la_tabla_de_conciliacion_separa_kardex_y_ajuste(self):
+        tabla, _ = conciliar(self.esc, REAL_JUNIO)
+        f = fila(tabla, "1_111")
+        self.assertEqual(f["Entradas del mes"], 20)          # solo Kardex
+        self.assertEqual(f["Salidas del mes"], -15)
+        self.assertEqual(f["Costo salidas del mes"], -150)
+        self.assertEqual(f["Valor inicial calculado"], 1000)
+        self.assertEqual(f["Valor final calculado"], 1050)
+        self.assertEqual(f["Ajuste vigente unidades"], -5)
+        self.assertEqual(f["Ajuste vigente valor"], -50)
+        self.assertEqual(f["Valor final ajustado"], 1000)
+
+    def test_costo_de_ventas_incluye_la_salida_de_conciliacion(self):
+        # CMV = |costo de salida| del periodo: $150 Kardex + $50 conciliación
+        self.assertEqual(valor(self.h, "CMV 12 MESES", "1_111"), 200)
 
     def test_hoja_de_control_trazable(self):
         aj = self.res["ajustes_conciliacion"].set_index("LLAVE")
@@ -185,6 +247,11 @@ class TestAplicarAjustes(unittest.TestCase):
         self.assertEqual(aj.loc["1_111", "Valor calculado antes del ajuste"], 1050)
         self.assertEqual(aj.loc["1_111", "Ajuste valor"], -50)
         self.assertEqual(aj.loc["1_111", "Origen del valor"], m.ORIGEN_VALOR_ARCHIVO)
+        self.assertEqual(aj.loc["1_111", "Método"], m.METODO_UN_MOVIMIENTO)
+        self.assertEqual(aj.loc["1_111", "Salida conciliación"], -5)
+        self.assertEqual(aj.loc["1_111", "Costo salida conciliación"], -50)
+        self.assertEqual(aj.loc["1_111", "Stock final"], 100)
+        self.assertEqual(aj.loc["1_111", "Valor final"], 1000)
         self.assertEqual(aj.loc["1_111", "Usuario"], "admin")
         self.assertEqual(aj.loc["1_111", "Archivo"], "real_junio.xlsx")
         self.assertFalse(aj["Cambió desde la aprobación"].any())
@@ -206,7 +273,9 @@ class TestAplicarAjustes(unittest.TestCase):
         res2, _ = aplicar(self.esc, tabla)
         h2 = res2["historico"]
         self.assertEqual(valor(h2, "STOCK JUNIO 2026", "1_111"), 100)
-        self.assertEqual(valor(h2, "AJUSTE CONCILIACION UNIDADES JUNIO 2026", "1_111"), -5)
+        self.assertEqual(valor(h2, "AJUSTE CONCILIACION SALIDA JUNIO 2026", "1_111"), -5)
+        self.assertEqual(valor(h2, "SALIDA JUNIO 2026", "1_111"), -20)
+        self.assertEqual(valor(h2, "COSTO SALIDA JUNIO 2026", "1_111"), -200)
         self.assertEqual(len(res2["ajustes_conciliacion"]), 4)
         vigentes = [r for r in self.esc.almacen.registro_ajustes() if r["vigente"]]
         self.assertEqual(len(vigentes), 1)
@@ -226,7 +295,8 @@ class TestAplicarAjustes(unittest.TestCase):
                                    self.esc.ruta_actualizado, confirmar_reemplazo=True)
         h = res["historico"]
         self.assertEqual(valor(h, "STOCK JUNIO 2026", "1_111"), 100)      # sigue igual al real
-        self.assertEqual(valor(h, "AJUSTE CONCILIACION UNIDADES JUNIO 2026", "1_111"), -10)
+        self.assertEqual(valor(h, "AJUSTE CONCILIACION SALIDA JUNIO 2026", "1_111"), -10)
+        self.assertEqual(valor(h, "COSTE TOTAL JUNIO 2026", "1_111"), 1000)
         aj = res["ajustes_conciliacion"].set_index("LLAVE")
         self.assertTrue(aj.loc["1_111", "Cambió desde la aprobación"])
         self.assertEqual(aj.loc["1_111", "Ajuste unidades aprobado"], -5)
@@ -255,23 +325,81 @@ class TestCasosEspeciales(unittest.TestCase):
         tabla, _ = conciliar(esc, filas, con_valor=False)
         res, _ = aplicar(esc, tabla)
         h = res["historico"]
-        # 1_111: 100 und. x ($1.050 / 105) = $1.000 ; 1_222: 45 x 10 = $450
+        # Costo promedio vigente: 1_111 -5 und. x $10 = -$50 ; 1_222 +5 x $10 = +$50
         self.assertEqual(valor(h, "STOCK JUNIO 2026", "1_111"), 100)
         self.assertEqual(valor(h, "COSTE TOTAL JUNIO 2026", "1_111"), 1000)
         self.assertEqual(valor(h, "COSTE TOTAL JUNIO 2026", "1_222"), 450)
         aj = res["ajustes_conciliacion"].set_index("LLAVE")
         self.assertEqual(aj.loc["1_111", "Origen del valor"], m.ORIGEN_VALOR_UNITARIO)
+        self.assertEqual(valor(h, "COSTO SALIDA JUNIO 2026", "1_111"), -200)
+        self.assertEqual(valor(h, "COSTO ENTRADA JUNIO 2026", "1_222"), 50)
 
-    def test_ausentes_se_llevan_a_cero_solo_si_se_pide(self):
+    def test_ausentes_del_archivo_no_se_ajustan(self):
         esc = escenario()
         tabla, _ = conciliar(esc, REAL_JUNIO[:1])
-        sin = c.ajustes_propuestos(tabla)
-        self.assertNotIn("222", sin["Codigo Articulo"].tolist())
-        res, _ = aplicar(esc, tabla, ausentes_como_cero=True)
+        res, propuesta = aplicar(esc, tabla)
+        self.assertEqual(propuesta["Codigo Articulo"].tolist(), ["111"])
         h = res["historico"]
-        self.assertEqual(valor(h, "STOCK JUNIO 2026", "1_222"), 0)
-        self.assertEqual(valor(h, "COSTE TOTAL JUNIO 2026", "1_222"), 0)
-        self.assertEqual(valor(h, "STOCK JUNIO 2026", "7_111"), 0)
+        self.assertEqual(valor(h, "STOCK JUNIO 2026", "1_222"), 40)
+        self.assertEqual(valor(h, "STOCK JUNIO 2026", "7_111"), -2)
+
+    def test_cierre_en_cero_con_kardex_positivo_conserva_el_kardex(self):
+        esc = escenario()
+        tabla, _ = conciliar(esc, [["1", "111", "A", 0, 0], ["1", "222", "B", 45, 470]])
+        f = fila(tabla, "1_111")
+        self.assertEqual(f["Estado"], c.ESTADO_CONSERVA_KARDEX)
+        self.assertEqual(f["Ajuste unidades propuesto"], 0)
+        res, propuesta = aplicar(esc, tabla)
+        self.assertNotIn("111", propuesta["Codigo Articulo"].tolist())
+        h = res["historico"]
+        self.assertEqual(valor(h, "STOCK JUNIO 2026", "1_111"), 105)
+        self.assertEqual(valor(h, "COSTE TOTAL JUNIO 2026", "1_111"), 1050)
+        self.assertEqual(valor(h, "SALIDA JUNIO 2026", "1_111"), -15)
+        self.assertEqual(valor(h, "STOCK JUNIO 2026", "1_222"), 45)
+
+    def test_regla_del_cierre_en_cero_tambien_en_el_motor(self):
+        # Ajuste aprobado con Kardex negativo; luego el Kardex se corrige
+        # y queda positivo: el motor conserva el Kardex y lo informa.
+        esc = escenario()
+        tabla, _ = conciliar(esc, [["7", "111", "A7", 0, 0]])
+        aplicar(esc, tabla)
+        corregido = KARDEX_JUNIO[:3] + [mov("2026-06-15", salida=-4, costo=40, bodega=HERRAMIENTAS, cod="111")]
+        plan = esc.plan(corregido, "kardex_junio_v2.xlsx")
+        res, _ = g.ejecutar_cargue(plan, esc.base, esc.almacen, "admin", esc.ruta_actualizado,
+                                   confirmar_reemplazo=True)
+        self.assertEqual(valor(res["historico"], "STOCK JUNIO 2026", "7_111"), 6)
+        aj = res["ajustes_conciliacion"].set_index("LLAVE")
+        self.assertEqual(aj.loc["7_111", "Método"], m.METODO_CONSERVA_KARDEX)
+        self.assertEqual([v for v in res["verificaciones"] if not v[1]], [])
+
+    def test_unidades_y_valor_con_signos_opuestos(self):
+        # Sobran 5 und. pero el valor de cierre es MAYOR ($1.100 vs $1.050):
+        # salida de 5 und. al costo promedio ($10) y ajuste de valor +$100.
+        esc = escenario()
+        tabla, _ = conciliar(esc, [["1", "111", "A", 100, 1100]])
+        res, _ = aplicar(esc, tabla)
+        h = res["historico"]
+        self.assertEqual(valor(h, "STOCK JUNIO 2026", "1_111"), 100)
+        self.assertEqual(valor(h, "COSTE TOTAL JUNIO 2026", "1_111"), 1100)
+        self.assertEqual(valor(h, "AJUSTE CONCILIACION SALIDA JUNIO 2026", "1_111"), -5)
+        self.assertEqual(valor(h, "AJUSTE CONCILIACION COSTO SALIDA JUNIO 2026", "1_111"), -50)
+        self.assertEqual(valor(h, "AJUSTE CONCILIACION ENTRADA JUNIO 2026", "1_111"), 0)
+        self.assertEqual(valor(h, "AJUSTE CONCILIACION COSTO ENTRADA JUNIO 2026", "1_111"), 100)
+        aj = res["ajustes_conciliacion"].set_index("LLAVE")
+        self.assertEqual(aj.loc["1_111", "Método"], m.METODO_DIVIDIDO)
+        self.assertEqual([v for v in res["verificaciones"] if not v[1]], [])
+
+    def test_solo_valor_diferente_ajusta_costo_sin_unidades(self):
+        esc = escenario()
+        tabla, _ = conciliar(esc, [["1", "111", "A", 105, 1000], ["1", "222", "B", 40, 430]])
+        res, _ = aplicar(esc, tabla)
+        h = res["historico"]
+        self.assertEqual(valor(h, "AJUSTE CONCILIACION SALIDA JUNIO 2026", "1_111"), 0)
+        self.assertEqual(valor(h, "AJUSTE CONCILIACION COSTO SALIDA JUNIO 2026", "1_111"), -50)
+        self.assertEqual(valor(h, "AJUSTE CONCILIACION COSTO ENTRADA JUNIO 2026", "1_222"), 30)
+        self.assertEqual(valor(h, "STOCK JUNIO 2026", "1_111"), 105)
+        self.assertEqual(valor(h, "COSTE TOTAL JUNIO 2026", "1_111"), 1000)
+        self.assertEqual(valor(h, "COSTE TOTAL JUNIO 2026", "1_222"), 430)
 
     def test_solo_se_ajustan_periodos_con_kardex(self):
         esc = escenario()

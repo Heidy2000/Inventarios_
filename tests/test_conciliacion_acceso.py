@@ -71,7 +71,10 @@ class TestConciliacion(unittest.TestCase):
 
     def test_cero_reportado_es_dato_y_vacio_es_sin_dato(self):
         t, _ = self.conciliar([["1", "111", "A", 0], ["1", "222", "B", None]])
-        self.assertEqual(estado(t, "1_111"), c.ESTADO_DIFERENCIA)
+        # El 0 es un dato: se compara (diferencia 105) pero, por regla, con
+        # existencias positivas en el Kardex se conserva el Kardex.
+        self.assertEqual(estado(t, "1_111"), c.ESTADO_CONSERVA_KARDEX)
+        self.assertEqual(t.loc[t["LLAVE"] == "1_111", "Diferencia"].iloc[0], 105)
         self.assertEqual(estado(t, "1_222"), c.ESTADO_SIN_REAL)
 
     def test_cantidad_no_numerica_queda_pendiente(self):

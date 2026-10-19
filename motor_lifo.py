@@ -1182,10 +1182,21 @@ COLUMNAS_AJUSTE = [
     "Fecha aprobacion",
 ]
 
-ORIGEN_VALOR_ARCHIVO = "Valor del inventario real"
-ORIGEN_VALOR_UNITARIO = "Costo unitario calculado"
-ORIGEN_VALOR_CERO = "Stock real en 0"
+ORIGEN_VALOR_ARCHIVO = "Valor del inventario de cierre"
+ORIGEN_VALOR_UNITARIO = "Costo promedio vigente (valor ÷ unidades)"
+ORIGEN_VALOR_CERO = "Stock de cierre en 0 (valor 0)"
 ORIGEN_VALOR_SIN_REFERENCIA = "Sin costo de referencia (valor sin cambio)"
+
+METODO_UN_MOVIMIENTO = "Unidades y valor en un solo movimiento"
+METODO_DIVIDIDO = (
+    "Unidades al costo promedio vigente + ajuste de valor "
+    "(unidades y valor con signos opuestos)"
+)
+METODO_SOLO_VALOR = "Solo valor (sin diferencia de unidades)"
+METODO_CONSERVA_KARDEX = (
+    "Sin ajuste: inventario de cierre en 0 y Kardex con existencias; "
+    "se conserva el saldo del Kardex"
+)
 
 
 def normalizar_ajustes(ajustes):
@@ -1834,72 +1845,142 @@ def procesar_inventario(
             real_u = float(r["Stock_real"])
             real_v = r["Valor_real"]
 
-            if real_v is not None and not pd.isna(real_v):
-                real_v = float(real_v)
-                origen_valor = ORIGEN_VALOR_ARCHIVO
-            elif abs(real_u) <= EPS:
+            aprobado_u = r["Ajuste_unidades_aprobado"]
+            aprobado_v = r["Ajuste_valor_aprobado"]
+
+            base_ctrl = {
+                "Periodo": etiqueta,
+                "Fecha": fecha,
+                "Bodega": r["Bodega"],
+                "Codigo Articulo": r["Codigo_Articulo"],
+                "Articulo": r["Articulo"],
+                "LLAVE": ll,
+                "Stock calculado antes del ajuste": s_antes,
+                "Valor calculado antes del ajuste": c_antes,
+                "Ajuste unidades aprobado": aprobado_u,
+                "Ajuste valor aprobado": aprobado_v,
+                "Id conciliacion": r["Id_conciliacion"],
+                "Archivo": r["Archivo"],
+                "Usuario": r["Usuario"],
+                "Fecha aprobacion": r["Fecha_aprobacion"],
+            }
+
+            # Regla: inventario de cierre en 0 y Kardex con existencias
+            # positivas -> se conserva el saldo del Kardex, sin ajuste.
+            if abs(real_u) <= EPS and s_antes > EPS:
+                ajustes_conc.append({
+                    **base_ctrl,
+                    "Stock real": real_u,
+                    "Ajuste unidades": 0.0,
+                    "Entrada conciliación": 0.0,
+                    "Salida conciliación": 0.0,
+                    "Valor real": np.nan,
+                    "Ajuste valor": 0.0,
+                    "Costo entrada conciliación": 0.0,
+                    "Costo salida conciliación": 0.0,
+                    "Costo unitario usado": np.nan,
+                    "Origen del valor": "",
+                    "Método": METODO_CONSERVA_KARDEX,
+                    "Stock final": s_antes,
+                    "Valor final": c_antes,
+                    "Cambió desde la aprobación": bool(
+                        not pd.isna(aprobado_u) and abs(aprobado_u) > 0.001
+                    ),
+                })
+                continue
+
+            cu = costo_unitario_referencia(ll, s_antes, c_antes)
+
+            # Valor del cierre: el del archivo; sin valor, las unidades
+            # ajustadas se valoran al costo promedio vigente (el mismo
+            # criterio con que el motor mantiene el valor del inventario).
+            if abs(real_u) <= EPS:
                 real_v = 0.0
                 origen_valor = ORIGEN_VALOR_CERO
+            elif real_v is not None and not pd.isna(real_v):
+                real_v = float(real_v)
+                origen_valor = ORIGEN_VALOR_ARCHIVO
+            elif cu is not None:
+                real_v = c_antes + (real_u - s_antes) * cu
+                origen_valor = ORIGEN_VALOR_UNITARIO
             else:
-                cu = costo_unitario_referencia(ll, s_antes, c_antes)
-                if cu is not None:
-                    real_v = real_u * cu
-                    origen_valor = ORIGEN_VALOR_UNITARIO
-                else:
-                    real_v = c_antes
-                    origen_valor = ORIGEN_VALOR_SIN_REFERENCIA
+                real_v = c_antes
+                origen_valor = ORIGEN_VALOR_SIN_REFERENCIA
 
             aj_u = real_u - s_antes
             aj_v = real_v - c_antes
 
+            # Movimiento de conciliación:
+            #   faltante (aj_u > 0) -> ENTRADA con su costo de entrada
+            #   sobrante (aj_u < 0) -> SALIDA negativa con su costo de salida
+            # Si unidades y valor van en sentidos opuestos, las unidades se
+            # valoran al costo promedio vigente y el resto del valor queda
+            # como ajuste de valor (entrada si suma, salida si resta), para
+            # no registrar una salida que aumente el valor ni una entrada
+            # que lo disminuya.
+            ent_u = sal_u = ce = cs = 0.0
             if aj_u > EPS:
+                ent_u = aj_u
+                if aj_v >= 0:
+                    ce, metodo = aj_v, METODO_UN_MOVIMIENTO
+                else:
+                    ce = aj_u * cu if cu else 0.0
+                    cs = aj_v - ce
+                    metodo = METODO_DIVIDIDO
+            elif aj_u < -EPS:
+                sal_u = aj_u
+                if aj_v <= 0:
+                    cs, metodo = aj_v, METODO_UN_MOVIMIENTO
+                else:
+                    cs = aj_u * cu if cu else 0.0
+                    ce = aj_v - cs
+                    metodo = METODO_DIVIDIDO
+            else:
+                aj_u = 0.0
+                metodo = METODO_SOLO_VALOR
+                if aj_v > 0:
+                    ce = aj_v
+                else:
+                    cs = aj_v
+
+            if ent_u > 0:
                 agregar_lote(
-                    ll, fecha, aj_u,
-                    real_v / real_u if real_u > EPS else 0.0,
+                    ll, fecha, ent_u, ce / ent_u if ce > 0 else (cu or 0.0),
                     TIPO_AJUSTE_CONCILIACION,
                 )
-            elif aj_u < -EPS:
-                _, faltante = consumir_lifo(lotes_lifo[ll], -aj_u)
+            elif sal_u < 0:
+                _, faltante = consumir_lifo(lotes_lifo[ll], -sal_u)
                 deficit[ll] += faltante
             # Invariante de lotes: suma de lotes - deficit = stock.
             deficit[ll] = max(
                 sum(l["cantidad"] for l in lotes_lifo[ll]) - real_u, 0.0
             )
 
-            stock_actual[ll] = real_u
-            costo_actual[ll] = real_v
+            stock_actual[ll] = s_antes + ent_u + sal_u
+            costo_actual[ll] = c_antes + ce + cs
 
-            aprobado_u = r["Ajuste_unidades_aprobado"]
-            aprobado_v = r["Ajuste_valor_aprobado"]
             cambio = (
                 (not pd.isna(aprobado_u) and abs(aprobado_u - aj_u) > 0.001)
                 or (not pd.isna(aprobado_v) and abs(aprobado_v - aj_v) > 0.5)
             )
 
-            ajustes_conc.append(
-                {
-                    "Periodo": etiqueta,
-                    "Fecha": fecha,
-                    "Bodega": r["Bodega"],
-                    "Codigo Articulo": r["Codigo_Articulo"],
-                    "Articulo": r["Articulo"],
-                    "LLAVE": ll,
-                    "Stock calculado antes del ajuste": s_antes,
-                    "Stock real": real_u,
-                    "Ajuste unidades": aj_u,
-                    "Valor calculado antes del ajuste": c_antes,
-                    "Valor real": real_v,
-                    "Ajuste valor": aj_v,
-                    "Origen del valor": origen_valor,
-                    "Ajuste unidades aprobado": aprobado_u,
-                    "Ajuste valor aprobado": aprobado_v,
-                    "Cambió desde la aprobación": bool(cambio),
-                    "Id conciliacion": r["Id_conciliacion"],
-                    "Archivo": r["Archivo"],
-                    "Usuario": r["Usuario"],
-                    "Fecha aprobacion": r["Fecha_aprobacion"],
-                }
-            )
+            ajustes_conc.append({
+                **base_ctrl,
+                "Stock real": real_u,
+                "Ajuste unidades": aj_u,
+                "Entrada conciliación": ent_u,
+                "Salida conciliación": sal_u,
+                "Valor real": real_v,
+                "Ajuste valor": aj_v,
+                "Costo entrada conciliación": ce,
+                "Costo salida conciliación": cs,
+                "Costo unitario usado": cu if cu is not None else np.nan,
+                "Origen del valor": origen_valor,
+                "Método": metodo,
+                "Stock final": stock_actual[ll],
+                "Valor final": costo_actual[ll],
+                "Cambió desde la aprobación": bool(cambio),
+            })
 
             movs.append(
                 {
@@ -1912,17 +1993,17 @@ def procesar_inventario(
                     "Stock antes": s_antes,
                     "Entrada Kardex": 0.0,
                     "Salida Kardex": 0.0,
-                    "Entrada aplicada": 0.0,
-                    "Salida aplicada": 0.0,
+                    "Entrada aplicada": ent_u,
+                    "Salida aplicada": sal_u,
                     "Salida sin existencia": 0.0,
                     "Ajuste conciliación unidades": aj_u,
-                    "Stock después": real_u,
+                    "Stock después": stock_actual[ll],
                     "Costo Kardex Con Iva": 0.0,
-                    "Costo entrada aplicado": 0.0,
-                    "Costo salida aplicado": 0.0,
+                    "Costo entrada aplicado": ce,
+                    "Costo salida aplicado": cs,
                     "Ajuste costo residual": 0.0,
                     "Ajuste conciliación valor": aj_v,
-                    "Costo después": real_v,
+                    "Costo después": costo_actual[ll],
                 }
             )
 
@@ -2124,8 +2205,11 @@ def procesar_inventario(
     cols_aj_conc = [
         "Periodo", "Fecha", "Bodega", "Codigo Articulo", "Articulo", "LLAVE",
         "Stock calculado antes del ajuste", "Stock real", "Ajuste unidades",
+        "Entrada conciliación", "Salida conciliación", "Stock final",
         "Valor calculado antes del ajuste", "Valor real", "Ajuste valor",
-        "Origen del valor", "Ajuste unidades aprobado", "Ajuste valor aprobado",
+        "Costo entrada conciliación", "Costo salida conciliación", "Valor final",
+        "Costo unitario usado", "Origen del valor", "Método",
+        "Ajuste unidades aprobado", "Ajuste valor aprobado",
         "Cambió desde la aprobación", "Id conciliacion", "Archivo", "Usuario",
         "Fecha aprobacion",
     ]
@@ -2184,14 +2268,19 @@ def procesar_inventario(
                 "Costo entrada aplicado",
                 "Costo salida aplicado",
                 "Ajuste costo residual",
-                "Ajuste conciliación unidades",
-                "Ajuste conciliación valor",
             ]
         ].sum()
 
-        def mapear(col):
+        # Parte de las columnas anteriores que corresponde a ajustes de
+        # conciliación (para distinguirla de los movimientos del Kardex).
+        res_aj = datos[datos["Tipo movimiento"] == TIPO_AJUSTE_CONCILIACION].groupby("LLAVE")[
+            ["Entrada aplicada", "Salida aplicada", "Costo entrada aplicado", "Costo salida aplicado"]
+        ].sum()
+
+        def mapear(col, tabla=None):
+            tabla = res if tabla is None else tabla
             return (
-                hist["LLAVE"].map(res[col]).fillna(0.0).where(primera, 0.0)
+                hist["LLAVE"].map(tabla[col]).fillna(0.0).where(primera, 0.0)
             )
 
         sfx = f"{nombre} {anio}"
@@ -2202,12 +2291,12 @@ def procesar_inventario(
         ce_m = mapear("Costo entrada aplicado")
         cs_m = mapear("Costo salida aplicado")
         aj_m = mapear("Ajuste costo residual")
-        ajc_u = mapear("Ajuste conciliación unidades")
-        ajc_v = mapear("Ajuste conciliación valor")
-        # Stock = inicial + entradas + salidas (negativas) + ajuste de
-        # conciliación. NETO conserva solo los movimientos del Kardex.
-        stock_m = stock_prev + neto_m + ajc_u
-        coste_m = coste_prev + ce_m + cs_m + aj_m + ajc_v
+        # Entradas, salidas y costos INCLUYEN los ajustes de conciliación:
+        #   stock = inicial + entradas + salidas (negativas)
+        #   coste = coste anterior + costo entradas + costo salidas
+        #           + ajuste de costo residual
+        stock_m = stock_prev + neto_m
+        coste_m = coste_prev + ce_m + cs_m + aj_m
 
         nuevas_cols[f"ENTRADA {sfx}"] = entrada_m
         nuevas_cols[f"SALIDA {sfx}"] = salida_m
@@ -2215,8 +2304,11 @@ def procesar_inventario(
         nuevas_cols[f"COSTO ENTRADA {sfx}"] = ce_m
         nuevas_cols[f"COSTO SALIDA {sfx}"] = cs_m
         nuevas_cols[f"AJUSTE COSTO {sfx}"] = aj_m
-        nuevas_cols[f"AJUSTE CONCILIACION UNIDADES {sfx}"] = ajc_u
-        nuevas_cols[f"AJUSTE CONCILIACION VALOR {sfx}"] = ajc_v
+        # "De los cuales": parte de conciliación de cada columna
+        nuevas_cols[f"AJUSTE CONCILIACION ENTRADA {sfx}"] = mapear("Entrada aplicada", res_aj)
+        nuevas_cols[f"AJUSTE CONCILIACION SALIDA {sfx}"] = mapear("Salida aplicada", res_aj)
+        nuevas_cols[f"AJUSTE CONCILIACION COSTO ENTRADA {sfx}"] = mapear("Costo entrada aplicado", res_aj)
+        nuevas_cols[f"AJUSTE CONCILIACION COSTO SALIDA {sfx}"] = mapear("Costo salida aplicado", res_aj)
         nuevas_cols[f"STOCK {sfx}"] = stock_m
         nuevas_cols[f"COSTE TOTAL {sfx}"] = coste_m
 
@@ -2383,7 +2475,88 @@ def procesar_inventario(
         )
     )
 
+    # Coherencia mes a mes en todas las llaves:
+    #   STOCK = STOCK anterior + ENTRADA + SALIDA
+    #   COSTE = COSTE anterior + COSTO ENTRADA + COSTO SALIDA + AJUSTE COSTO
+    #   Parte Kardex + parte conciliación = total de cada columna
+    s_prev = hist[c_stock_base]
+    v_prev = hist[c_coste_base]
+    inc_stock = inc_coste = inc_partes = 0
+    for nombre, anio, num in meses:
+        sfx = f"{nombre} {anio}"
+        e, s = hist[f"ENTRADA {sfx}"], hist[f"SALIDA {sfx}"]
+        inc_stock += int(((s_prev + e + s - hist[f"STOCK {sfx}"]).abs() > 0.001).sum())
+        inc_coste += int((
+            (v_prev + hist[f"COSTO ENTRADA {sfx}"] + hist[f"COSTO SALIDA {sfx}"]
+             + hist[f"AJUSTE COSTO {sfx}"] - hist[f"COSTE TOTAL {sfx}"]).abs() > 0.01
+        ).sum())
+        datos_mes = df_mov[(df_mov["Fecha"] >= pd.Timestamp(anio, num, 1)) & (df_mov["Fecha"] <= fin_periodo(anio, num))]
+        k_mes = datos_mes[datos_mes["Tipo movimiento"] == TIPO_KARDEX].groupby("LLAVE")[
+            ["Entrada aplicada", "Salida aplicada", "Costo entrada aplicado", "Costo salida aplicado"]
+        ].sum()
+        for col_h, col_m, col_aj in (
+            (f"ENTRADA {sfx}", "Entrada aplicada", f"AJUSTE CONCILIACION ENTRADA {sfx}"),
+            (f"SALIDA {sfx}", "Salida aplicada", f"AJUSTE CONCILIACION SALIDA {sfx}"),
+            (f"COSTO ENTRADA {sfx}", "Costo entrada aplicado", f"AJUSTE CONCILIACION COSTO ENTRADA {sfx}"),
+            (f"COSTO SALIDA {sfx}", "Costo salida aplicado", f"AJUSTE CONCILIACION COSTO SALIDA {sfx}"),
+        ):
+            parte_k = hist["LLAVE"].map(k_mes[col_m]).fillna(0.0).where(primera, 0.0)
+            inc_partes += int(((parte_k + hist[col_aj] - hist[col_h]).abs() > 0.01).sum())
+        s_prev, v_prev = hist[f"STOCK {sfx}"], hist[f"COSTE TOTAL {sfx}"]
+
+    verif.append((
+        "Stock de cada mes = stock anterior + entradas + salidas",
+        inc_stock == 0, f"{inc_stock} inconsistencias",
+    ))
+    verif.append((
+        "Coste de cada mes = coste anterior + costo entradas + costo salidas",
+        inc_coste == 0, f"{inc_coste} inconsistencias",
+    ))
+    verif.append((
+        "Entradas, salidas y costos = movimientos del Kardex + ajustes de conciliación",
+        inc_partes == 0, f"{inc_partes} inconsistencias",
+    ))
+
+    # Historial original (meses hasta la base) sin cambios
+    cols_hist = [
+        c for c in historico.columns
+        if any(c == f"{pref} {p['nombre']} {p['anio']}" for p in meses_hist
+               for pref in ("STOCK", "ENTRADA", "SALIDA", "COSTO ENTRADA", "COSTO SALIDA", "COSTE", "COSTE TOTAL"))
+    ]
+    n_orig = len(historico)
+    cambios_hist = sum(
+        int((
+            (a_numero(historico[c]).reset_index(drop=True)
+             - a_numero(hist[c].iloc[:n_orig]).reset_index(drop=True)).abs() > 0.001
+        ).sum())
+        for c in cols_hist if c in hist.columns
+    )
+    verif.append((
+        "Historial original (hasta el mes base) sin cambios",
+        cambios_hist == 0, f"{len(cols_hist)} columnas revisadas, {cambios_hist} diferencias",
+    ))
+
     if len(df_aj_conc):
+        # Cada LLAVE ajustada debe cerrar el mes igual al inventario de cierre
+        aplicados = df_aj_conc[df_aj_conc["Método"] != METODO_CONSERVA_KARDEX]
+        no_cuadran = 0
+        for r in aplicados.to_dict("records"):
+            a_, m_ = periodo_de_etiqueta(r["Periodo"])
+            sfx = nombre_periodo(a_, m_)
+            fila = hist[(hist["LLAVE"] == r["LLAVE"]) & primera]
+            if not len(fila):
+                no_cuadran += 1
+                continue
+            if (abs(float(fila[f"STOCK {sfx}"].iloc[0]) - r["Stock real"]) > 0.001
+                    or abs(float(fila[f"COSTE TOTAL {sfx}"].iloc[0]) - r["Valor real"]) > 0.01):
+                no_cuadran += 1
+        verif.append((
+            "Llaves ajustadas: stock y coste final iguales al inventario de cierre",
+            no_cuadran == 0,
+            f"{len(aplicados)} ajustadas, {no_cuadran} sin cuadrar, "
+            f"{len(df_aj_conc) - len(aplicados)} conservan el Kardex (cierre en 0)",
+        ))
+
         cambiaron = int(df_aj_conc["Cambió desde la aprobación"].sum())
         verif.append(
             (
