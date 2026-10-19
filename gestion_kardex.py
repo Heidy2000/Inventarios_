@@ -21,6 +21,14 @@ Consecuencias:
   * Si falta un mes intermedio, el cargue se bloquea (continuidad).
   * La escritura es atómica: se calcula todo en memoria, se respaldan
     los archivos afectados y, si algo falla, se restauran.
+
+Ajustes de conciliación
+-----------------------
+El inventario real aprobado de un periodo se guarda aparte, en
+datos/ajustes/AAAA-MM.csv.gz, sin tocar los movimientos del Kardex. El
+motor lo aplica al cierre de ese mes como movimiento AJUSTE CONCILIACION,
+de modo que los movimientos originales y los ajustes quedan separados y
+trazables (hoja CONTROL_AJUSTES_CONCILIACION).
 """
 import hashlib
 import io
@@ -83,6 +91,8 @@ class Almacen:
         self.dir_respaldos = os.path.join(self.dir, "respaldos")
         self.ruta_registro = os.path.join(self.dir, "registro_cargues.json")
         self.ruta_bloqueo = os.path.join(self.dir, ".cargue_en_curso")
+        self.dir_ajustes = os.path.join(self.dir, "ajustes")
+        self.ruta_registro_ajustes = os.path.join(self.dir, "registro_ajustes.json")
 
     # ---------------- lectura ----------------
 
@@ -125,6 +135,56 @@ class Almacen:
         if not partes:
             return pd.DataFrame(columns=COLUMNAS_GUARDADAS)
         return pd.concat(partes, ignore_index=True)
+
+    # ---------------- ajustes de conciliación ----------------
+
+    def ruta_ajuste(self, etiqueta):
+        return os.path.join(self.dir_ajustes, f"{etiqueta}.csv.gz")
+
+    def periodos_ajustados(self):
+        if not os.path.isdir(self.dir_ajustes):
+            return []
+        return sorted(
+            n[: -len(".csv.gz")]
+            for n in os.listdir(self.dir_ajustes)
+            if n.endswith(".csv.gz") and not n.startswith(".")
+        )
+
+    def leer_ajustes(self, excluir=()):
+        partes = []
+        for p in self.periodos_ajustados():
+            if p in excluir:
+                continue
+            df = pd.read_csv(
+                self.ruta_ajuste(p), dtype=str, keep_default_na=False,
+                compression="gzip",
+            )
+            partes.append(df)
+        if not partes:
+            return pd.DataFrame(columns=m.COLUMNAS_AJUSTE)
+        df = pd.concat(partes, ignore_index=True)
+        for c in ("Stock real", "Valor real", "Ajuste unidades aprobado", "Ajuste valor aprobado"):
+            df[c] = pd.to_numeric(df[c].replace("", None), errors="coerce")
+        return df
+
+    @staticmethod
+    def serializar_ajustes(df):
+        salida = df.copy()
+        for c in m.COLUMNAS_AJUSTE:
+            if c not in salida.columns:
+                salida[c] = ""
+        texto = salida[m.COLUMNAS_AJUSTE].to_csv(index=False)
+        buf = io.BytesIO()
+        import gzip
+        with gzip.GzipFile(fileobj=buf, mode="wb", mtime=0) as gz:
+            gz.write(texto.encode("utf-8"))
+        return buf.getvalue()
+
+    def registro_ajustes(self):
+        if not os.path.exists(self.ruta_registro_ajustes):
+            return []
+        with open(self.ruta_registro_ajustes, "r", encoding="utf-8") as f:
+            return json.load(f)
 
     def registro(self):
         if not os.path.exists(self.ruta_registro):
@@ -304,7 +364,10 @@ def analizar_kardex(kardex_crudo, base_df, almacen, nombre_archivo, contenido):
             "los meses faltantes (o un archivo que los incluya)."
         )
 
+    con_ajustes = sorted(set(por_periodo) & set(almacen.periodos_ajustados()))
+
     return {
+        "con_ajustes": con_ajustes,
         "archivo": nombre_archivo,
         "sha256": huella,
         "filas_leidas": len(kn),
@@ -327,8 +390,11 @@ def analizar_kardex(kardex_crudo, base_df, almacen, nombre_archivo, contenido):
 # EJECUCIÓN
 # ============================================================
 
-def _recalcular(base_df, movimientos, periodo_final, plan=None):
-    res = m.procesar_inventario(base_df, movimientos, periodo_final=periodo_final)
+def _recalcular(base_df, movimientos, periodo_final, plan=None, ajustes=None):
+    res = m.procesar_inventario(
+        base_df, movimientos, periodo_final=periodo_final,
+        ajustes_conciliacion=ajustes,
+    )
 
     # Las filas rechazadas al leer el archivo no se guardan (no se
     # pueden procesar), pero sí deben figurar en el resultado.
@@ -423,7 +489,11 @@ def ejecutar_cargue(
         periodo_final = todos[-1]
 
         # 1) Cálculo completo en memoria: si falla, no se toca el disco.
-        res, excel = _recalcular(base_df, movimientos, periodo_final, plan)
+        # Los ajustes de conciliación aprobados se conservan: el stock de
+        # esos meses sigue igual al conteo real.
+        res, excel = _recalcular(
+            base_df, movimientos, periodo_final, plan, almacen.leer_ajustes()
+        )
 
         # 2) Escritura con respaldo y restauración ante cualquier error.
         registro = almacen.registro()
@@ -475,11 +545,105 @@ def reprocesar_todo(base_df, almacen, usuario, ruta_actualizado, secretos=None):
 
     with almacen.bloqueo():
         movimientos = almacen.leer_todos()
-        res, excel = _recalcular(base_df, movimientos, periodos[-1])
+        res, excel = _recalcular(
+            base_df, movimientos, periodos[-1], ajustes=almacen.leer_ajustes()
+        )
         with almacen.transaccion([ruta_actualizado]):
             escribir_atomico(ruta_actualizado, excel)
 
     return res, excel
+
+
+def aplicar_ajustes_conciliacion(
+    periodo,
+    ajustes,
+    base_df,
+    almacen,
+    usuario,
+    ruta_actualizado,
+    archivo="",
+    id_conciliacion="",
+    secretos=None,
+):
+    """
+    Guarda el inventario real aprobado del periodo (reemplaza los ajustes
+    anteriores de ese periodo) y recalcula el inventario. Con 'ajustes'
+    vacío retira los ajustes del periodo. No deja cambios parciales.
+
+    ajustes: DataFrame con Bodega, Codigo Articulo, Articulo, Stock real,
+    Valor real (puede ir vacío) y, opcionalmente, Ajuste unidades
+    aprobado / Ajuste valor aprobado (lo que vio el usuario al aprobar).
+    """
+    acceso.exigir_admin(usuario, secretos, "aplicar ajustes de conciliación")
+
+    if periodo not in almacen.periodos():
+        raise ValueError(
+            f"Solo se pueden ajustar periodos con Kardex cargado. "
+            f"{_texto_periodo(periodo)} no tiene Kardex en el registro de cargues."
+        )
+
+    ajustes = ajustes.copy() if ajustes is not None else pd.DataFrame()
+    ahora = datetime.now().isoformat(timespec="seconds")
+
+    if len(ajustes):
+        ajustes["Periodo"] = periodo
+        ajustes["Id conciliacion"] = id_conciliacion or ""
+        ajustes["Archivo"] = archivo
+        ajustes["Usuario"] = usuario
+        ajustes["Fecha aprobacion"] = ahora
+        ajustes = m.normalizar_ajustes(ajustes)[m.COLUMNAS_AJUSTE]
+
+    with almacen.bloqueo():
+        periodos = almacen.periodos()
+        otros = almacen.leer_ajustes(excluir={periodo})
+        todos = pd.concat([otros, ajustes], ignore_index=True) if len(ajustes) else otros
+
+        res, excel = _recalcular(
+            base_df, almacen.leer_todos(), periodos[-1], ajustes=todos
+        )
+
+        registro = almacen.registro_ajustes()
+        for r in registro:
+            if r["periodo"] == periodo and r.get("vigente", True):
+                r["vigente"] = False
+                r["reemplazado_el"] = ahora
+        aplicados = res["ajustes_conciliacion"]
+        aplicados = aplicados[aplicados["Periodo"] == periodo]
+        registro.append(
+            {
+                "periodo": periodo,
+                "accion": "aplicar" if len(ajustes) else "retirar",
+                "referencias": int(len(ajustes)),
+                "ajuste_unidades": float(aplicados["Ajuste unidades"].sum()),
+                "ajuste_valor": float(aplicados["Ajuste valor"].sum()),
+                "archivo": archivo,
+                "id_conciliacion": id_conciliacion or "",
+                "usuario": usuario,
+                "fecha": ahora,
+                "vigente": bool(len(ajustes)),
+            }
+        )
+
+        ruta_aj = almacen.ruta_ajuste(periodo)
+        with almacen.transaccion([ruta_aj, almacen.ruta_registro_ajustes, ruta_actualizado]):
+            if len(ajustes):
+                escribir_atomico(ruta_aj, Almacen.serializar_ajustes(ajustes))
+            elif os.path.exists(ruta_aj):
+                os.remove(ruta_aj)
+            escribir_atomico(ruta_actualizado, excel)
+            escribir_atomico(
+                almacen.ruta_registro_ajustes,
+                json.dumps(registro, ensure_ascii=False, indent=1).encode("utf-8"),
+            )
+
+    return res, excel
+
+
+def retirar_ajustes_conciliacion(periodo, base_df, almacen, usuario, ruta_actualizado, secretos=None):
+    """Elimina los ajustes de conciliación del periodo y recalcula."""
+    return aplicar_ajustes_conciliacion(
+        periodo, None, base_df, almacen, usuario, ruta_actualizado, secretos=secretos,
+    )
 
 
 # ============================================================
@@ -519,7 +683,7 @@ def _mostrar_resultado(st, res):
             ("Para revisión", ui.formato_entero(s["para_revision"]),
              "signo, duplicado, fila mixta, sin costo", "naranja" if s["para_revision"] else "verde"),
             ("Salidas sin existencia", ui.formato_entero(s["con_salida_sin_existencia"]),
-             f"{ui.formato_numero(s['unidades_sin_existencia'])} unidades no descontadas", "naranja"),
+             f"{ui.formato_numero(s['unidades_sin_existencia'])} unidades descontadas sin stock", "naranja"),
             ("Referencias nuevas", ui.formato_entero(s["llaves_nuevas"]),
              f"{ui.formato_entero(s['anulados'])} anulados excluidos", "oscuro"),
         ],
@@ -535,7 +699,8 @@ def _mostrar_resultado(st, res):
     tablas = [
         ("rechazados", "Movimientos rechazados"),
         ("revision", "Movimientos para revisión"),
-        ("sin_existencia", "Salidas sin existencia"),
+        ("sin_existencia", "Salidas sin existencia (descontadas; dejaron stock negativo)"),
+        ("ajustes_conciliacion", "Ajustes de conciliación con el inventario real"),
         ("ajustes_costo", "Ajustes de costo residual (stock en 0)"),
     ]
     for clave, titulo in tablas:
@@ -633,6 +798,21 @@ def pagina_actualizar_kardex(st, usuario, archivo_actualizado, archivo_historico
             "puede ser un archivo con varios meses o un archivo por mes."
         )
 
+    ajustes_vig = [r for r in almacen.registro_ajustes() if r.get("vigente")]
+    if ajustes_vig:
+        with st.expander(f"Ajustes de conciliación vigentes ({len(ajustes_vig)} periodos)"):
+            st.dataframe(
+                pd.DataFrame(ajustes_vig)[
+                    ["periodo", "referencias", "ajuste_unidades", "ajuste_valor", "archivo", "usuario", "fecha"]
+                ].rename(columns={
+                    "periodo": "Periodo", "referencias": "Referencias",
+                    "ajuste_unidades": "Ajuste neto unidades", "ajuste_valor": "Ajuste neto valor",
+                    "archivo": "Inventario real", "usuario": "Usuario", "fecha": "Fecha",
+                }),
+                use_container_width=True, hide_index=True,
+            )
+            st.caption("Se gestionan en la página Conciliación mensual.")
+
     vigentes = almacen.registro_vigente()
     if vigentes:
         with st.expander(f"Historial de cargues ({len(vigentes)} periodos vigentes)"):
@@ -671,7 +851,7 @@ def pagina_actualizar_kardex(st, usuario, archivo_actualizado, archivo_historico
             ui.insignia("Se excluye 5-ANULADO", "info")
             + ui.insignia("Bodegas 11, 12, 18, 19, 20 y 21 excluidas", "info")
             + ui.insignia("Costo con IVA", "info")
-            + ui.insignia("Salidas sin existencia: no se descuentan", "warn"),
+            + ui.insignia("Salidas sin existencia: se descuentan completas", "warn"),
             unsafe_allow_html=True,
         )
         st.caption(
@@ -741,6 +921,14 @@ def pagina_actualizar_kardex(st, usuario, archivo_actualizado, archivo_historico
                     "Este archivo modifica periodos anteriores al último cargado ("
                     + ", ".join(_texto_periodo(p) for p in plan["anteriores_al_ultimo"])
                     + "). Los meses posteriores se recalcularán para conservar la continuidad del stock."
+                )
+
+            if plan.get("con_ajustes"):
+                st.info(
+                    "Estos periodos tienen ajustes de conciliación aprobados: "
+                    + ", ".join(_texto_periodo(p) for p in plan["con_ajustes"])
+                    + ". Se conservan: el ajuste se recalcula contra el nuevo Kardex "
+                    "para que el stock siga igual al inventario real."
                 )
 
             confirmar = True

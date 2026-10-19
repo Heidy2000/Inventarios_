@@ -1125,7 +1125,9 @@ if pagina == "Actualizar Kardex":
 
 if pagina == "Conciliación mensual":
 
-    conciliacion.pagina_conciliacion(st, df, BASE_DIR)
+    conciliacion.pagina_conciliacion(
+        st, df, BASE_DIR, ARCHIVO_HISTORICO, ARCHIVO_ACTUALIZADO
+    )
 
     st.stop()
 
@@ -1445,9 +1447,14 @@ valor_total_col = valor_total
 # Registros fuera de la base: sin stock al corte pero con valor
 # (costos residuales heredados o stocks negativos).
 if COL_STOCK in df_filtrado.columns and COL_COSTE in df_filtrado.columns:
+    # Sin stock que conservan valor, o con stock negativo (salidas
+    # registradas sin existencias).
     _fuera = df_filtrado[
-        (df_filtrado[COL_STOCK].fillna(0) <= EPS)
-        & (df_filtrado[COL_COSTE].fillna(0).abs() > 0.5)
+        (df_filtrado[COL_STOCK].fillna(0) < -EPS)
+        | (
+            (df_filtrado[COL_STOCK].fillna(0) <= EPS)
+            & (df_filtrado[COL_COSTE].fillna(0).abs() > 0.5)
+        )
     ]
 else:
     _fuera = df_filtrado.iloc[0:0]
@@ -1457,7 +1464,8 @@ NOTA_BASE_VALOR = (
     f"stock al corte {ESQ['corte']}."
     + (
         f" Se excluyen {formato_entero(len(_fuera))} registros sin stock que "
-        f"conservan valor ({formato_moneda(suma_columna(_fuera, COL_COSTE))}); "
+        f"conservan valor o con stock negativo por salidas sin existencias "
+        f"({formato_moneda(suma_columna(_fuera, COL_COSTE))}); "
         "revísalos en Riesgos y detalle."
         if len(_fuera)
         else ""
@@ -2854,7 +2862,7 @@ elif pagina == "Riesgos y detalle":
     with d1:
         vista_detalle = st.radio(
             "Registros",
-            ["Con stock al corte", "Sin stock que conservan valor", "Todos"],
+            ["Con stock al corte", "Sin stock o con stock negativo", "Todos"],
             horizontal=True,
             key="riesgos_vista_detalle"
         )
@@ -2867,7 +2875,7 @@ elif pagina == "Riesgos y detalle":
 
     if vista_detalle == "Con stock al corte":
         base_detalle = df_con_stock
-    elif vista_detalle == "Sin stock que conservan valor":
+    elif vista_detalle == "Sin stock o con stock negativo":
         base_detalle = _fuera
     else:
         base_detalle = df_filtrado

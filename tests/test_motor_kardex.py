@@ -238,27 +238,58 @@ class TestValidaciones(unittest.TestCase):
         with self.assertRaises(ValueError):
             m.leer_kardex(excel_kardex([{"Bodega": "x", "Otra": 1}]))
 
-    def test_salida_sin_existencia_no_genera_stock_negativo(self):
+    def test_salida_sin_existencia_se_contabiliza_completa(self):
+        # Stock 100, salida de 130: se descuentan las 130 (stock -30),
+        # la salida conserva su signo y su costo cuenta completo.
         res = self.esc.cargar([mov("2026-06-10", salida=-130, costo=1300)])
-        self.assertEqual(valor(res["historico"], "STOCK JUNIO 2026", LL_111), 0)
+        h = res["historico"]
+        self.assertEqual(valor(h, "STOCK JUNIO 2026", LL_111), -30)
+        self.assertEqual(valor(h, "SALIDA JUNIO 2026", LL_111), -130)
+        self.assertEqual(valor(h, "COSTO SALIDA JUNIO 2026", LL_111), -1300)
         self.assertEqual(len(res["sin_existencia"]), 1)
         self.assertEqual(float(res["sin_existencia"]["Salida sin existencia"].iloc[0]), 30)
+        self.assertEqual(float(res["sin_existencia"]["Salida aplicada"].iloc[0]), 130)
+        self.assertEqual([v for v in res["verificaciones"] if not v[1]], [])
 
-    def test_stock_negativo_heredado_se_conserva_y_cuadra(self):
+    def test_salida_con_stock_inicial_cero(self):
+        esc = Escenario(base_minima([(REPUESTOS, "111", 0, 0)]))
+        res = esc.cargar([mov("2026-06-10", salida=-8, costo=800)])
+        h = res["historico"]
+        self.assertEqual(valor(h, "STOCK JUNIO 2026", LL_111), -8)
+        self.assertEqual(valor(h, "SALIDA JUNIO 2026", LL_111), -8)
+        self.assertEqual(valor(h, "COSTO SALIDA JUNIO 2026", LL_111), -800)
+        self.assertEqual(valor(h, "CMV 12 MESES", LL_111), 800)
+
+    def test_salida_de_referencia_nueva_sin_existencias(self):
+        esc = Escenario(base_minima([(REPUESTOS, "111", 10, 100)]))
+        res = esc.cargar([mov("2026-06-10", salida=-3, costo=30, cod="777")])
+        self.assertEqual(valor(res["historico"], "STOCK JUNIO 2026", "1_777"), -3)
+
+    def test_entrada_posterior_cubre_la_salida_sin_existencia(self):
+        esc = Escenario(base_minima([(REPUESTOS, "111", 0, 0)]))
+        res = esc.cargar([
+            mov("2026-06-10", salida=-5, costo=500),
+            mov("2026-06-20", entrada=8, costo=800),
+            mov("2026-07-02", salida=-2, costo=200),
+        ])
+        h = res["historico"]
+        self.assertEqual(valor(h, "STOCK JUNIO 2026", LL_111), 3)
+        self.assertEqual(valor(h, "STOCK JULIO 2026", LL_111), 1)
+        self.assertEqual([v for v in res["verificaciones"] if not v[1]], [])
+
+    def test_stock_negativo_heredado_sigue_descontando_y_cuadra(self):
         esc = Escenario(base_minima([(REPUESTOS, "111", -2, -200)]))
         res = esc.cargar([mov("2026-06-10", salida=-1, costo=100)])
-        self.assertEqual(valor(res["historico"], "STOCK JUNIO 2026", LL_111), -2)
+        self.assertEqual(valor(res["historico"], "STOCK JUNIO 2026", LL_111), -3)
         self.assertEqual(len(res["sin_existencia"]), 1)
-        cuadre = [v for v in res["verificaciones"] if v[0].startswith("Stock de la hoja")][0]
-        self.assertTrue(cuadre[1], cuadre)
-        nuevos = [v for v in res["verificaciones"] if "generados por el Kardex" in v[0]][0]
-        self.assertTrue(nuevos[1])
+        self.assertEqual([v for v in res["verificaciones"] if not v[1]], [])
 
     def test_stock_negativo_heredado_se_recupera_con_entradas(self):
         esc = Escenario(base_minima([(REPUESTOS, "111", -2, -200)]))
         res = esc.cargar([mov("2026-06-10", entrada=5, costo=500), mov("2026-06-11", salida=-4, costo=400)])
-        self.assertEqual(valor(res["historico"], "STOCK JUNIO 2026", LL_111), 0)
+        self.assertEqual(valor(res["historico"], "STOCK JUNIO 2026", LL_111), -1)
         self.assertEqual(float(res["sin_existencia"]["Salida sin existencia"].iloc[0]), 1)
+        self.assertEqual([v for v in res["verificaciones"] if not v[1]], [])
 
     def test_anulados_y_bodegas_excluidas(self):
         res = self.esc.cargar([

@@ -114,7 +114,7 @@ class TestAppSimulada(unittest.TestCase):
         self.assertIn("Lectura analítica de los movimientos", textos)
 
     def test_riesgos_vistas_del_detalle(self):
-        for vista in ["Con stock al corte", "Sin stock que conservan valor", "Todos"]:
+        for vista in ["Con stock al corte", "Sin stock o con stock negativo", "Todos"]:
             with self.subTest(vista=vista):
                 ejecutar(self.dir, "admin", "Riesgos y detalle",
                          sesion={"riesgos_vista_detalle": vista, "riesgos_buscar": "VALVULA"})
@@ -182,6 +182,52 @@ class TestAppSimulada(unittest.TestCase):
         self.assertEqual(fila_c["Stock final calculado"], 7)
         self.assertEqual(fila_c["Estado"], "Conciliado")
         self.assertIsNotNone(ident)
+
+    def test_flujo_conciliacion_con_ajustes_desde_la_pagina(self):
+        d = crear_copia_app()
+        base, _ = m.leer_historico(os.path.join(d, "HISTORICO_INVENTARIOS.xlsx"))
+        fila = base.iloc[1]
+        kardex = excel_kardex([
+            mov("2026-06-15", entrada=2, costo=400000, bodega=fila["Bodega"], cod=fila["Codigo Articulo"]),
+            mov("2026-06-20", salida=-1, costo=172550, bodega=fila["Bodega"], cod=fila["Codigo Articulo"]),
+        ])
+        archivos = {"up_kardex": st.ArchivoSubido("kardex_junio.xlsx", kardex)}
+        _, sesion = ejecutar(d, "admin", "Actualizar Kardex", archivos=archivos)
+        ejecutar(d, "admin", "Actualizar Kardex", sesion=sesion, archivos=archivos,
+                 botones={"Procesar y actualizar el tablero"})
+
+        # Real: 5 unidades (el Kardex deja 7) y valor 1.000.000
+        buf = io.BytesIO()
+        pd.DataFrame({
+            "Bodega": [fila["Bodega"]], "Codigo Articulo": [fila["Codigo Articulo"]],
+            "Existencia": [5], "Valor Total": [1000000],
+        }).to_excel(buf, index=False)
+        archivos = {"conc_archivo": st.ArchivoSubido("real_junio.xlsx", buf.getvalue())}
+        _, sesion = ejecutar(d, "admin", "Conciliación mensual", archivos=archivos,
+                             botones={"Conciliar"})
+        self.sin_errores()
+        tabla, _, _ = sesion["conc_resultado"]
+        f = tabla[tabla["Codigo Articulo"] == fila["Codigo Articulo"]].iloc[0]
+        self.assertEqual(f["Estado"], "Con diferencia")
+        self.assertEqual(f["Ajuste unidades propuesto"], -2)
+
+        sesion["conc_confirmar_ajustes"] = True
+        estado, sesion = ejecutar(d, "admin", "Conciliación mensual", sesion=sesion,
+                                  archivos=archivos, botones={"conc_aplicar_ajustes"})
+        self.assertEqual(estado, "reejecutar", st.mensajes("error"))
+
+        _, sesion = ejecutar(d, "admin", "Conciliación mensual", sesion=sesion, archivos=archivos)
+        self.sin_errores()
+        self.assertTrue(any("Se aplicaron 1 ajustes" in s for s in st.mensajes("success")))
+        tabla, _, _ = sesion["conc_resultado"]
+        f = tabla[tabla["Codigo Articulo"] == fila["Codigo Articulo"]].iloc[0]
+        self.assertEqual(f["Estado"], "Conciliado con ajuste")
+        self.assertEqual(f["Stock final ajustado"], 5)
+        self.assertEqual(f["Valor final ajustado"], 1000000)
+
+        # El tablero (usuario inventarios) ya refleja el inventario ajustado
+        ejecutar(d, "inventarios", "Riesgos y detalle")
+        self.sin_errores()
 
     def test_ordenes_de_compra_no_envia_correo_sin_pulsar_el_boton(self):
         buf = io.BytesIO()
